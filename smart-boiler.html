@@ -1,0 +1,147 @@
+<script type="text/javascript">
+    // Terminal command  node-red -v -D logging.console.level=trace
+
+    RED.nodes.registerType('smart-boiler',{
+        category: 'vib-node',
+        color: '#bdeeff',
+        defaults: {
+            name: {value:""},
+            topic:{value:""},
+            mqttSettings: {value: "", type: "smart-boiler-settings"},
+            boilerTempTopic:{value:""},
+            boilerSpTopic:{value:""},
+            boilerLeadingDeviceTopic:{value:""},
+            mqttUpdates:{value:false},
+            debugInfo:{value:false},
+            triggerMode:{value:"triggerMode.statechange.startup",required: true},
+            cycleDuration: {value:60,required: true,validate:function(v) {
+                if (isNaN(v)){
+                    return false;
+                }
+
+                if (v<0 || v> 35){
+                    //this.warn("overrideSp need to be >0 et <= 35")
+                    return false;
+                }
+                return true;
+            }},
+            outputUpdates:{value:true},
+            defaultSp:{value:5,required: true, validate:function(v) {
+                if (isNaN(v)){
+                    return false;
+                }
+
+                if (v<0 || v> 35){
+                    //this.warn("overrideSp need to be >0 et <= 35")
+                    return false;
+                }
+                return true;
+            }},
+            defaultTemp:{value:10,required: true, validate:function(v) {
+                if (isNaN(v)){
+                    return false;
+                }
+
+                if (v<0 || v> 35){
+                    //this.warn("overrideSp need to be >0 et <= 35")
+                    return false;
+                }
+                return true;
+            }},
+            maxDurationSinceLastInput:{value:"5",required: true, validate:function(v) {
+                if (isNaN(v)){
+                    return false;
+                }
+
+                if (v<0 || v> 120){
+                    //this.warn("overrideSp need to be >0 et <= 35")
+                    return false;
+                }
+                return true;
+            }}   
+        },
+        inputs:1,
+        outputs:1,
+        icon: "font-awesome/fa-magnet",
+        label: function() {
+            return this.name||"smart-boiler";
+        },
+        oneditprepare: function() {
+            var node = this; 
+        },
+        oneditsave: function() {
+            var node = this;  
+        },
+        oneditresize: function() {
+        }
+    });
+
+</script>
+
+<script type="text/html" data-template-name="smart-boiler">
+
+    <div class="form-row">
+        <label for="node-input-mqttSettings"><i class="fa fa-globe"></i> Mqtt</label>
+        <input type="text" id="node-input-mqttSettings"></input>
+    </div>
+    <div class="form-row">
+        <label for="node-input-mqttUpdates"><i class="fa fa-tasks"></i> Mqtt updates</label>
+        <input type="checkbox"title="" id="node-input-mqttUpdates"  placeholder="temqtt topicmp"></input>
+    </div>
+    <div class="form-row">
+        <label for="node-input-outputUpdates"><i class="fa fa-tasks"></i> Output updates</label>
+        <input type="checkbox"title="" id="node-input-outputUpdates"  placeholder="temqtt topicmp"></input>
+    </div>
+    <div class="form-row">
+        <label for="node-input-boilerSpTopic"><i class="fa fa-tasks"></i> Set point topic</label>
+        <input type="text" title="" id="node-input-boilerSpTopic"  placeholder="temqtt topicmp"></input>
+        <label for="node-input-boilerSpTopic"></label> 
+    </div>
+    <div class="form-row">
+        <label for="node-input-boilerTempTopic"><i class="fa fa-tasks"></i> Temperature topic</label>
+        <input type="text" title="" id="node-input-boilerTempTopic"  placeholder="mqtt topic"></input>
+        <label for="node-input-boilerTempTopic"></label> 
+    </div>
+    <div class="form-row">
+        <label for="node-input-boilerLeadingDeviceTopic"><i class="fa fa-tasks"></i> Leading device topic</label>
+        <input type="text" title="" id="node-input-boilerLeadingDeviceTopic"  placeholder="mqtt topic"></input>
+       
+    </div>
+    <div class="form-row">
+        <label style="width:120px !important;" for="node-input-cycleDuration"><i class="fa fa-tasks"></i> Update cycle</label>
+        <input type="text" id="node-input-cycleDuration" style="width:60px !important; text-align: right;" placeholder="duration"></input>
+        <label for="node-input-cycleDuration2"></i> s</label>
+    </div>
+    <div class="form-row">
+        <label for="node-input-triggerMode"><i class="fa fa-play"></i> Trigger mode </label>
+        <select id="node-input-triggerMode">
+          <option value="triggerMode.statechange">wWhen state changes</option>
+          <option value="triggerMode.statechange.startup">When state changes + startup</option>
+          <option value="triggerMode.everyCycle">Every cycle</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label style="width:120px !important;" for="node-input-maxDurationSinceLastInput"><i class="fa fa-tasks"></i> Max duration</label>
+        <input type="text" id="node-input-maxDurationSinceLastInput" style="width:60px !important; text-align: right;" placeholder="duration"></input>
+        <label for="node-input-maxDurationSinceLastInput" style="width:200px;"></i> min since last input</label>
+    </div>
+    <div class="form-row">
+        <label style="width:120px !important;" for="node-input-defaultTemp"><i class="fa fa-tasks"></i> Default Temp</label>
+        <input type="text" id="node-input-defaultTemp" style="width:60px !important; text-align: right;" placeholder="duration"></input>
+        <label for="node-input-defaultTemp" style="width:200px;"></i> °C</label>
+    </div>
+    <div class="form-row">
+        <label style="width:120px !important;" for="node-input-defaultSp"><i class="fa fa-tasks"></i> Default set point</label>
+        <input type="text" id="node-input-defaultSp" style="width:60px !important; text-align: right;" placeholder="duration"></input>
+        <label for="node-input-defaultSp" style="width:200px;"></i> °C</label>
+    </div>
+    <div class="form-row">
+        <label style="width:120px !important;" for="node-input-debugInfo"><i class="fa fa-tasks"></i> Debug info</label>
+        <input type="checkbox" title="send debug information to the console" id="node-input-debugInfo"  ></input>
+    </div>
+    
+</script>
+
+<script type="text/html" data-help-name="smart-boiler">
+    <p>A node to control and send update to boiler</p>
+</script>
