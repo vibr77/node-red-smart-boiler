@@ -107,7 +107,7 @@ module.exports = function (RED) {
                 node.liveStack.push(newItem);
             }
             
-            n.log(JSON.stringify(node.liveStack));
+            nlog(JSON.stringify(node.liveStack));
             return;
         }
 
@@ -120,8 +120,8 @@ module.exports = function (RED) {
             let now = moment();
             let diff=node.lastInputTs.diff(now,"m");
 
-            n.log("node.maxDurationSinceLastInput:"+node.maxDurationSinceLastInput);
-            n.log("diff:"+diff);
+            nlog("node.maxDurationSinceLastInput:"+node.maxDurationSinceLastInput);
+            nlog("diff:"+diff);
 
             if (Math.abs(diff)>=node.maxDurationSinceLastInput){
                 nlog("maxDurationSinceLastInput exceed, sending security message to the boiler")
@@ -207,7 +207,7 @@ module.exports = function (RED) {
                 bUpdate==true;
             }
             
-            if (bFoundValve==true && ( node.triggerMode=="triggerMode.everyCycle" || bUpdate==true)){
+            if (bFoundActiveValve==true && ( node.triggerMode=="triggerMode.everyCycle" || bUpdate==true)){
                 let msg={};
                 msg.payload=node.activeItem;
                 
