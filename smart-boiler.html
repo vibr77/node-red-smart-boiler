@@ -13,6 +13,7 @@
             boilerLeadingDeviceTopic:{value:""},
             mqttUpdates:{value:false},
             debugInfo:{value:false},
+            boilerSecurity:{value:false},
             triggerMode:{value:"triggerMode.statechange.startup",required: true},
             cycleDuration: {value:60,required: true,validate:function(v) {
                 if (isNaN(v)){
@@ -124,6 +125,10 @@
         <label style="width:120px !important;" for="node-input-maxDurationSinceLastInput"><i class="fa fa-tasks"></i> Max duration</label>
         <input type="text" id="node-input-maxDurationSinceLastInput" style="width:60px !important; text-align: right;" placeholder="duration"></input>
         <label for="node-input-maxDurationSinceLastInput" style="width:200px;"></i> min since last input</label>
+    </div>
+    <div class="form-row">
+        <label for="node-input-boilerSecurity"><i class="fa fa-tasks"></i> Boiler security</label>
+        <input type="checkbox" title="" id="node-input-boilerSecurity"  placeholder=""></input>
     </div>
     <div class="form-row">
         <label style="width:120px !important;" for="node-input-defaultTemp"><i class="fa fa-tasks"></i> Default Temp</label>

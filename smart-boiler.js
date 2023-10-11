@@ -36,9 +36,10 @@ module.exports = function (RED) {
         this.defaultSp=n.defaultSp ? n.defaultSp :5;                    // Default boiler set point if no update received in the given timeframe (maxDurationSinceLastInput)
         this.defaultTemp=n.defaultTemp ? n.defaultTemp :10;             // Default boiler current temperature if no update received in the given timeframe (maxDurationSinceLastInput)
         this.maxDurationSinceLastInput=n.maxDurationSinceLastInput ? n.maxDurationSinceLastInput : 5; // Important to avoid the Boiler to continue to heat endlessly, expressed in min
-        this.lastInputTs=moment();      // Timestamp of the last input msg received
+        this.lastInputTs=moment();                                      // Timestamp of the last input msg received
         this.debugInfo=n.debugInfo ? n.debugInfo:false                  // boolean flag to trigger debug information to the console.
         this.mqttSettings = RED.nodes.getNode(n.mqttSettings);          // MQTT connexion settings
+        this.boilerSecurity=n.boilerSecurity?n.boilerSecurity:false;    // send security msg after max duration period
         this.liveStack=[];                                              // Stack of valve information 
         
         var node = this;
@@ -83,7 +84,7 @@ module.exports = function (RED) {
             // Processing input msg
             // Expected structure of the incomming msg {sp: int, temp: int, name:text}
 
-            let bFound=false;                   // is the item exist in the stack
+            let bFound=false;                           // is the item exist in the stack
             let now = moment();                 
             
             node.lastInputTs=now;
@@ -108,23 +109,24 @@ module.exports = function (RED) {
             }
             
             nlog(JSON.stringify(node.liveStack));
+            evaluate();
             return;
         }
 
-        function evaluate(stack){
+        function evaluate(){
 
             let bUpdate=false;                          // state is updated ?
-            let bFoundActiveValve=false;                      // activeValve (Sp>Temp) is found ?
+            let bFoundActiveValve=false;                // activeValve (Sp>Temp) is found ?
             let maxSp=0;                                // Higher Sp of the inactive (passive) Valve
 
             let now = moment();
             let diff=node.lastInputTs.diff(now,"m");
 
-            nlog("node.maxDurationSinceLastInput:"+node.maxDurationSinceLastInput);
-            nlog("diff:"+diff);
+            if (node.boilerSecurity==true && Math.abs(diff)>=node.maxDurationSinceLastInput){
 
-            if (Math.abs(diff)>=node.maxDurationSinceLastInput){
-                nlog("maxDurationSinceLastInput exceed, sending security message to the boiler")
+                nlog("maxDurationSinceLastInput exceed, sending security message to the boiler");
+                nlog("node.maxDurationSinceLastInput:"+node.maxDurationSinceLastInput+" diff:"+diff);
+               
                 if (node.outputUpdates==true){
                     let msg={};
                     msg.payload={temp:node.defaultTemp,sp:node.defaultSp,name:"error security mode"};
@@ -152,7 +154,7 @@ module.exports = function (RED) {
 
                 return;
             }
-
+            node.log(JSON.stringify(node.liveStack));
             node.liveStack.forEach(function(item){
                 // For each item in the stack,
                 // if the set point > current temp then the Valve is active
@@ -180,13 +182,13 @@ module.exports = function (RED) {
                             bUpdate=true;                       // bUpdate fla is set
                         }
 
-                        /*let activeItemGap=parseFloat(node.activeItem.sp)-parseFloat(node.activeItem.temp);
+                        let activeItemGap=parseFloat(node.activeItem.sp)-parseFloat(node.activeItem.temp);
                         let itemGap=parseFloat(item.sp)-parseFloat(item.temp);
 
                         if (itemGap>activeItemGap){
                             node.activeItem=item;
                             bUpdate=true;
-                        }*/
+                        }
                     }else{
                         let itemGap=parseFloat(item.sp)-parseFloat(item.temp);
                         previousGap=itemGap
@@ -194,7 +196,7 @@ module.exports = function (RED) {
                         bUpdate=true;
                     }  
                 }else{
-                    if (bFoundValve==false){ // we select the biggest SP (not important we need one valve to set the Boiler Sp and Temp)
+                    if (bFoundActiveValve==false){ // we select the biggest SP (not important we need one valve to set the Boiler Sp and Temp)
                         if (item.sp>maxSp){
                             maxSp=item.sp;
                             node.passiveItem=item;
@@ -282,9 +284,7 @@ module.exports = function (RED) {
                 node.warn("invalid input msg format expect temp, sp, id to be number");
                     return;
             } 
-
             processInput(msg.payload);
-    
         });
 
         if (node.mqttUpdates==true && node.mqttSettings && node.mqttSettings.mqttHost){
@@ -329,19 +329,17 @@ module.exports = function (RED) {
             });
         }
 
-        node.evalInterval = setInterval(evaluate, node.cycleDuration*1000)
-
-        // Run initially directly after start / deploy.
-        //if (node.triggerMode != 'triggerMode.statechange') {
-        setTimeout(evaluate, 1000)
-       // }
+        node.evalInterval = setInterval(evaluate, node.cycleDuration*1000);
+        
+        if (node.triggerMode != 'triggerMode.statechange') {
+            setTimeout(evaluate, 1000)
+        }
 
        node.on('close', function() {
         clearInterval(node.evalInterval)
     })
 
     }
-    RED.nodes.registerType('smart-boiler', SmartBoiler)
-  
+    RED.nodes.registerType('smart-boiler', SmartBoiler);
   }
   
