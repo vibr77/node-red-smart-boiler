@@ -1,6 +1,6 @@
 {
   "name": "node-red-contrib-vib-smart-boiler",
-  "version": "0.0.45",
+  "version": "0.0.60",
   "description": "Smart boiler node to control multiple thermostat",
   "author": "Vincent Besson <vincent@besson.be>",
   "main": "smart-boiler.js",
@@ -8,9 +8,17 @@
     "type": "git",
     "url": "https://github.com/vibr77/node-red-smart-boiler.git"
   },
-  "dependencies": {
+  "devDependencies": {
+    "chai": "^4.3.10",
+    "mocha": "^10.2.0",
+    "mocha-sinon": "^2.1.2",
     "moment": "^2.29.4",
-    "mqtt": "^5.1.1"
+    "mqtt": "^5.1.2",
+    "node-red": "^0.18.4",
+    "node-red-node-test-helper": "^0.1.8"
+  },
+  "scripts": {
+    "test": "mocha \"test/*_spec.js\"   --timeout 5000"
   },
   "node-red": {
     "nodes": {

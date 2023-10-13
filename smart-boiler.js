@@ -23,7 +23,6 @@ module.exports = function (RED) {
     function SmartBoiler(n) {
       RED.nodes.createNode(this, n)
         this.name = n.name
-    
         this.mqttclient=null;
         this.mqttstack=[];                                              // Stack of MQTT message to be sent
         this.boilerTempTopic=n.boilerTempTopic;                         // MQTT Topic to update the boiler current temperature
@@ -43,13 +42,12 @@ module.exports = function (RED) {
         this.liveStack=[];                                              // Stack of valve information 
         
         var node = this;
-
-        node.previousGap=0;                                             // Previous temperature GAP from the temperature and the set point for the activeItem
-        node.activeItem=undefined;                                      // Current Active Valve as reference for the boiler sp>temp
-        node.passiveItem=undefined;                                     // if no active Valve we need to set a ref to the boiler sp<Temp
+        
+        node.activeItem=undefined;                                       // Current Active Valve as reference for the boiler sp>temp
         node.previousItem=undefined;                                     // Item of the stack sent to the boiler
-
+      
         function nlog(msg){
+            
             if (node.debug==true){
                 node.log(msg);
             }
@@ -109,7 +107,7 @@ module.exports = function (RED) {
             }
             
             nlog(JSON.stringify(node.liveStack));
-            evaluate();
+            evaluate();                                 // Evaluate change straight away
             return;
         }
 
@@ -117,8 +115,7 @@ module.exports = function (RED) {
 
             let bUpdate=false;                          // state is updated ?
             let bFoundActiveValve=false;                // activeValve (Sp>Temp) is found ?
-            let maxSp=0;                                // Higher Sp of the inactive (passive) Valve
-
+                            
             let now = moment();
             let diff=node.lastInputTs.diff(now,"m");
 
@@ -154,7 +151,17 @@ module.exports = function (RED) {
 
                 return;
             }
+            
             node.log(JSON.stringify(node.liveStack));
+
+            bFoundActiveValve=false;
+            
+            node.previousActiveItemGap=node.activeItemGap;
+            node.activeItemGap=-99;
+            
+            node.previousItem=node.activeItem;
+            node.log("node.previousActiveItemGap:"+node.previousActiveItemGap);
+            
             node.liveStack.forEach(function(item){
                 // For each item in the stack,
                 // if the set point > current temp then the Valve is active
@@ -164,52 +171,37 @@ module.exports = function (RED) {
                 // node.activeItem equal to the active valve to be sent to the boiler
                 // node.passiveItem equal to the passive valve in case there is no activeItem
 
-                if (parseInt(item.sp)>parseFloat(item.temp)){   // look for valve with set point > current temp
-                    
-                    bFoundActiveValve=true;
-                    if (node.activeItem!==undefined){            // an activeItem exist previously
-
-                        if (node.activeItem!=item){              // Not the same Item 
-                            let itemGap=parseFloat(item.sp)-parseFloat(item.temp); // check if the current GAP is higher than the previous Gap to select the valve
-                            if (node.previousGap<itemGap){      
-                                node.previousGap=itemGap
-                                node.activeItem=item;           // A new valve is selected
-                                bUpdate=true                    // bUpdate flag is set   
-                            }
-                        }else{                                  // Same Item 
-                            let itemGap=parseFloat(item.sp)-parseFloat(item.temp);
-                            node.previousGap=itemGap;           // update the previous gap
-                            bUpdate=true;                       // bUpdate fla is set
-                        }
-
-                        let activeItemGap=parseFloat(node.activeItem.sp)-parseFloat(node.activeItem.temp);
-                        let itemGap=parseFloat(item.sp)-parseFloat(item.temp);
-
-                        if (itemGap>activeItemGap){
-                            node.activeItem=item;
-                            bUpdate=true;
-                        }
-                    }else{
-                        let itemGap=parseFloat(item.sp)-parseFloat(item.temp);
-                        previousGap=itemGap
-                        node.activeItem=item;
-                        bUpdate=true;
-                    }  
-                }else{
-                    if (bFoundActiveValve==false){ // we select the biggest SP (not important we need one valve to set the Boiler Sp and Temp)
-                        if (item.sp>maxSp){
-                            maxSp=item.sp;
-                            node.passiveItem=item;
-                        }
-                    }
+                let itemGap=parseFloat(item.sp).toFixed(2)-parseFloat(item.temp).toFixed(2);
+                console.log("id:"+item.id+" itemGap:"+itemGap);
+                if (itemGap>node.activeItemGap){
+                    node.activeItemGap=itemGap;
+                    node.activeItem=item;
+                }else if (itemGap==node.activeItemGap && node.activeItem.sp<item.sp){
+                    node.activeItem=item;
                 }
             });
 
-            if (bFoundActiveValve==false && node.previousItem!=node.passiveItem){
-                bUpdate==true;
+            node.log("node.activeItemGap:"+node.activeItemGap);
+            node.log("bFoundActiveValve:"+bFoundActiveValve);
+            node.log("bUpdate:"+bUpdate);
+
+            if(node.previousItem===undefined && node.activeItem!==undefined){
+                bUpdate=true;
             }
-            
-            if (bFoundActiveValve==true && ( node.triggerMode=="triggerMode.everyCycle" || bUpdate==true)){
+
+            if (node.previousItem!==undefined && node.previousItem.id!=node.activeItem.id){
+                bUpdate=true;
+            }
+            else if (node.previousItem!==undefined && node.previousActiveItemGap!=node.activeItemGap){
+                bUpdate=true;
+            }
+
+            if (node.activeItemGap>0){
+                bFoundActiveValve=true;
+            }
+
+            if (bUpdate==true || node.triggerMode=="triggerMode.everyCycle"){
+
                 let msg={};
                 msg.payload=node.activeItem;
                 
@@ -229,59 +221,35 @@ module.exports = function (RED) {
 
                 if (node.outputUpdates)
                     node.send([msg,null]);
-
-                node.status({
-                    fill:  'green',
-                    shape: 'dot',
-                    text:("Active:"+node.activeItem.name+", sp: "+node.activeItem.sp+"°C, temp: "+node.activeItem.temp+"°C")
-                });  
-
-
-            }else if (node.passiveItem!==undefined && ( node.triggerMode=="triggerMode.everyCycle" || bUpdate==true)){
-                let msg={};
-                msg.payload=node.passiveItem;
-
-                if (node.mqttUpdates==true){
-                    
-                    mqttmsg={topic:node.boilerSpTopic,payload:parseInt(node.passiveItem.sp),qos:0,retain:false};
-                    node.mqttstack.push(mqttmsg);
-
-                    mqttmsg={topic:node.boilerTempTopic,payload:parseInt(node.passiveItem.temp),qos:0,retain:false};
-                    node.mqttstack.push(mqttmsg);
-
-                    mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:node.passiveItem.name,qos:0,retain:false};
-                    node.mqttstack.push(mqttmsg);
-                    
-                    sendMqtt();
-                }
-
-                if (node.outputUpdates)
-                    node.send([msg,null]);
-
-                node.status({
-                    fill:  'blue',
-                     shape: 'dot',
-                    text:("Passive:"+node.passiveItem.name+", sp: "+node.passiveItem.sp+"°C, temp: "+node.passiveItem.temp+"°C")
-                });
-
-            }else{
-                nlog("no item in the stack found");
+                
+                if (bFoundActiveValve==true){
+                    node.status({
+                        fill:  'green',
+                        shape: 'dot',
+                        text:("Active:"+node.activeItem.name+", sp: "+node.activeItem.sp+"°C, temp: "+node.activeItem.temp+"°C")
+                    });
+                }else{
+                    node.status({
+                        fill:  'blue',
+                        shape: 'dot',
+                        text:("Active:"+node.activeItem.name+", sp: "+node.activeItem.sp+"°C, temp: "+node.activeItem.temp+"°C")
+                    });
+                } 
             }
         }
 
         node.on('input', function(msg) {
-            // <--------- TODO add some control on the input
-            //
+            
             if (msg.payload===undefined || 
                 (msg.payload.sp===undefined     || 
                  msg.payload.temp===undefined   || 
                  msg.payload.name===undefined   || 
                  msg.payload.id===undefined)){
-                    node.warn("input msg is invalid expecting msg.payload{sp:,temp:,name:,id");
+                    node.error("input msg is invalid expecting msg.payload{sp:,temp:,name:,id}");
                     return;
                  }
             if( isNaN(msg.payload.sp) || isNaN(msg.payload.temp) || isNaN(msg.payload.id)){
-                node.warn("invalid input msg format expect temp, sp, id to be number");
+                node.error("invalid input msg format expect temp, sp, id to be number");
                     return;
             } 
             processInput(msg.payload);
@@ -311,11 +279,10 @@ module.exports = function (RED) {
         
             node.mqttclient.on('connect', () => {
 
-                
                 let msg=node.mqttstack.shift();
             
                 while (msg!==undefined){
-                    nlog.log('MQTT Connected -> start dequeuing'); 
+                    nlog('MQTT Connected -> start dequeuing'); 
                     if (msg.topic===undefined || msg.payload===undefined)
                         return;
                     node.mqttclient.publish(msg.topic,JSON.stringify(msg.payload),{ qos: msg.qos, retain: msg.retain },(error) => {
@@ -335,9 +302,9 @@ module.exports = function (RED) {
             setTimeout(evaluate, 1000)
         }
 
-       node.on('close', function() {
-        clearInterval(node.evalInterval)
-    })
+        node.on('close', function() {
+            clearInterval(node.evalInterval)
+        })
 
     }
     RED.nodes.registerType('smart-boiler', SmartBoiler);

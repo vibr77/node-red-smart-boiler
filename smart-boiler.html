@@ -20,8 +20,7 @@
                     return false;
                 }
 
-                if (v<0 || v> 35){
-                    //this.warn("overrideSp need to be >0 et <= 35")
+                if (v<0 || v> 600){
                     return false;
                 }
                 return true;
@@ -80,7 +79,15 @@
 </script>
 
 <script type="text/html" data-template-name="smart-boiler">
-
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" title="node & home asssitant device name" id="node-input-name" placeholder="Name">
+       
+    </div>
+    <div class="form-row">
+        <label for="node-input-topic"><i class="fa fa-tasks"></i> Topic</label>
+        <input type="text" title="msg output topic"  id="node-input-topic" placeholder="Topic"></input>
+    </div>
     <div class="form-row">
         <label for="node-input-mqttSettings"><i class="fa fa-globe"></i> Mqtt</label>
         <input type="text" id="node-input-mqttSettings"></input>
