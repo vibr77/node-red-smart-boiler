@@ -48,7 +48,7 @@ module.exports = function (RED) {
       
         function nlog(msg){
             
-            if (node.debug==true){
+            if (node.debugInfo==true){
                 node.log(msg);
             }
         }
@@ -152,7 +152,7 @@ module.exports = function (RED) {
                 return;
             }
             
-            node.log(JSON.stringify(node.liveStack));
+            nlog(JSON.stringify(node.liveStack));
 
             bFoundActiveValve=false;
             
@@ -160,7 +160,7 @@ module.exports = function (RED) {
             node.activeItemGap=-99;
             
             node.previousItem=node.activeItem;
-            node.log("node.previousActiveItemGap:"+node.previousActiveItemGap);
+            nlog("node.previousActiveItemGap:"+node.previousActiveItemGap);
             
             node.liveStack.forEach(function(item){
                 // For each item in the stack,
@@ -181,9 +181,9 @@ module.exports = function (RED) {
                 }
             });
 
-            node.log("node.activeItemGap:"+node.activeItemGap);
-            node.log("bFoundActiveValve:"+bFoundActiveValve);
-            node.log("bUpdate:"+bUpdate);
+            nlog("node.activeItemGap:"+node.activeItemGap);
+            nlog("bFoundActiveValve:"+bFoundActiveValve);
+            nlog("bUpdate:"+bUpdate);
 
             if(node.previousItem===undefined && node.activeItem!==undefined){
                 bUpdate=true;
