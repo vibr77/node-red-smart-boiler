@@ -1,7 +1,7 @@
 
 /*
 __   _____ ___ ___        Author: Vincent BESSON
- \ \ / /_ _| _ ) _ \      Release: 0.42
+ \ \ / /_ _| _ ) _ \      Release: 0.66
   \ V / | || _ \   /      Date: 20231010
    \_/ |___|___/_|_\      Description: Nodered Heating Boiler Management
                 2023      Licence: Creative Commons
