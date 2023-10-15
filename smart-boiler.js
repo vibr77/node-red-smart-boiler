@@ -16,7 +16,8 @@ TODO:
 
 var moment = require('moment'); // require
 const mqtt = require("mqtt");
-const debug=true;
+var pjson = require('./package.json');
+
 
 module.exports = function (RED) {
     
@@ -172,7 +173,7 @@ module.exports = function (RED) {
                 // node.passiveItem equal to the passive valve in case there is no activeItem
 
                 let itemGap=parseFloat(item.sp).toFixed(2)-parseFloat(item.temp).toFixed(2);
-                console.log("id:"+item.id+" itemGap:"+itemGap);
+                nlog("id:"+item.id+" itemGap:"+itemGap);
                 if (itemGap>node.activeItemGap){
                     node.activeItemGap=itemGap;
                     node.activeItem=item;
