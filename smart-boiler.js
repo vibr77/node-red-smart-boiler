@@ -90,9 +90,9 @@ module.exports = function (RED) {
             node.liveStack.forEach(function(item){
                 if (item.id==msg.id){                   // item is found in the stack
                     bFound=true;
-                    item.sp=msg.sp;
+                    item.sp=msg.setpoint;
                     item.name=msg.name;
-                    item.temp=msg.temp;
+                    item.temp=msg.temperature;
                     item.lastupdate= now.toISOString(); // last update timestamp of the item
                 }
             });
@@ -100,8 +100,8 @@ module.exports = function (RED) {
             if (bFound==false){                         // Not found add to the stack
                 let newItem={};
                 newItem.id=msg.id;
-                newItem.sp=msg.sp;
-                newItem.temp=msg.temp;
+                newItem.sp=msg.setpoint;
+                newItem.temp=msg.temperature;
                 newItem.name=msg.name;
                 newItem.lastupdate= now.toISOString();
                 node.liveStack.push(newItem);
@@ -127,7 +127,7 @@ module.exports = function (RED) {
                
                 if (node.outputUpdates==true){
                     let msg={};
-                    msg.payload={temp:node.defaultTemp,sp:node.defaultSp,name:"error security mode"};
+                    msg.payload={temperature:node.defaultTemp,setpoint:node.defaultSp,name:"error security mode"};
                     node.send([msg,null]);
                 }
 
@@ -242,15 +242,15 @@ module.exports = function (RED) {
         node.on('input', function(msg) {
             
             if (msg.payload===undefined || 
-                (msg.payload.sp===undefined     || 
-                 msg.payload.temp===undefined   || 
+                (msg.payload.setpoint===undefined     || 
+                 msg.payload.temperature===undefined   || 
                  msg.payload.name===undefined   || 
                  msg.payload.id===undefined)){
-                    node.error("input msg is invalid expecting msg.payload{sp:,temp:,name:,id}");
+                    node.error("input msg is invalid expecting msg.payload{setpoint:,temperature:,name:,id}");
                     return;
                  }
-            if( isNaN(msg.payload.sp) || isNaN(msg.payload.temp) || isNaN(msg.payload.id)){
-                node.error("invalid input msg format expect temp, sp, id to be number");
+            if( isNaN(msg.payload.setpoint) || isNaN(msg.payload.temperature) || isNaN(msg.payload.id)){
+                node.error("invalid input msg format expect temperature, setpoint, id to be number");
                     return;
             } 
             processInput(msg.payload);
