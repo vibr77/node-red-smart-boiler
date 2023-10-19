@@ -225,7 +225,7 @@ module.exports = function (RED) {
                 
                 if (bFoundActiveValve==true){
                     node.status({
-                        fill:  'green',
+                        fill:  'red',
                         shape: 'dot',
                         text:("Active:"+node.activeItem.name+", sp: "+node.activeItem.sp+"°C, temp: "+node.activeItem.temp+"°C")
                     });
