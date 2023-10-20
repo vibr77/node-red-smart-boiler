@@ -66,13 +66,13 @@ module.exports = function (RED) {
             
             while (msg!==undefined){
                 nlog('MQTT-> msg dequeueing');
-                let msgstr=JSON.stringify(msg.payload);
+               
                 if (msg.topic===undefined || msg.payload===undefined)
                     return;
-
-                node.mqttclient.publish(msg.topic.toString(),JSON.stringify(msg.payload),{ qos: msg.qos, retain: msg.retain },(error) => {
+                let msgstr=JSON.stringify(msg.payload).replace(/\\"/g, '"');
+                node.mqttclient.publish(msg.topic.toString(),msgstr,{ qos: msg.qos, retain: msg.retain },(error) => {
                     if (error) {
-                        node.error(error)
+                        node.error("mqtt error: "+error)
                     }
                 });
                 msg=node.mqttstack.shift(); 
@@ -127,7 +127,7 @@ module.exports = function (RED) {
                
                 if (node.outputUpdates==true){
                     let msg={};
-                    msg.payload={temperature:node.defaultTemp,setpoint:node.defaultSp,name:"error security mode"};
+                    msg.payload={temperature:node.defaultTemp,setpoint:node.defaultSp,name:"Security mode"};
                     node.send([msg,null]);
                 }
 
@@ -138,9 +138,9 @@ module.exports = function (RED) {
                     mqttmsg={topic:node.boilerTempTopic,payload:parseInt(node.defaultTemp),qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
 
-                    mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:"error security mode",qos:0,retain:false};
+                    mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:{"value":"Security mode"},qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
-                        
+                     
                     sendMqtt();
                 }
 
@@ -182,10 +182,6 @@ module.exports = function (RED) {
                 }
             });
 
-            nlog("node.activeItemGap:"+node.activeItemGap);
-            nlog("bFoundActiveValve:"+bFoundActiveValve);
-            nlog("bUpdate:"+bUpdate);
-
             if(node.previousItem===undefined && node.activeItem!==undefined){
                 bUpdate=true;
             }
@@ -201,7 +197,11 @@ module.exports = function (RED) {
                 bFoundActiveValve=true;
             }
 
-            if (bUpdate==true || node.triggerMode=="triggerMode.everyCycle"){
+            nlog("node.activeItemGap:"+node.activeItemGap);
+            nlog("bFoundActiveValve:"+bFoundActiveValve);
+            nlog("bUpdate:"+bUpdate);
+
+            if (node.activeItem!==undefined && (bUpdate==true || node.triggerMode=="triggerMode.everyCycle")){
 
                 let msg={};
                 msg.payload=node.activeItem;
@@ -213,8 +213,8 @@ module.exports = function (RED) {
 
                     mqttmsg={topic:node.boilerTempTopic,payload:parseInt(node.activeItem.temp),qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
-
-                    mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:node.activeItem.name,qos:0,retain:false};
+                    //let p=JSON.stringify();
+                    mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:{value:node.activeItem.name},qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
                     
                     sendMqtt();
@@ -256,12 +256,13 @@ module.exports = function (RED) {
             processInput(msg.payload);
         });
 
+       
         if (node.mqttUpdates==true && node.mqttSettings && node.mqttSettings.mqttHost){
             
             const protocol = 'mqtt'
             const host = node.mqttSettings.mqttHost
             const port = node.mqttSettings.mqttPort
-            const clientId=`mqtt_${Math.random().toString(16).slice(3)}`;
+            const clientId=`smb_${Math.random().toString(16).slice(3)}`;
             const connectUrl = `${protocol}://${host}:${port}`
            
             node.mqttclient = mqtt.connect(connectUrl, {
@@ -275,7 +276,7 @@ module.exports = function (RED) {
             });
 
             node.mqttclient.on('error', function (error) {
-                node.warn("MQTT error:"+error);
+                node.warn("MQTT error: "+error);
             });
         
             node.mqttclient.on('connect', () => {
