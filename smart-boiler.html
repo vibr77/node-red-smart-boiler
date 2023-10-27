@@ -11,6 +11,8 @@
             boilerTempTopic:{value:""},
             boilerSpTopic:{value:""},
             boilerLeadingDeviceTopic:{value:""},
+            extTempEntity:{value:""},
+            extTempBoilerTopic:{value:""},
             mqttUpdates:{value:false},
             debugInfo:{value:false},
             boilerSecurity:{value:false},
@@ -111,6 +113,17 @@
         <label for="node-input-boilerTempTopic"></label> 
     </div>
     <div class="form-row">
+        <label for="node-input-extTempBoilerTopic"><i class="fa fa-tasks"></i> External temperature topic</label>
+        <input type="text" title="" id="node-input-extTempBoilerTopic"  placeholder="mqtt topic"></input>
+        <label for="node-input-extTempBoilerTopic"></label> 
+    </div>
+    
+    <div class="form-row">
+        <label for="node-input-extTempEntity"><i class="fa fa-tasks"></i> External temperature</label>
+        <input type="text" title="" id="node-input-extTempEntity"  placeholder=""></input>
+        <label for="node-input-extTempEntity">entity</label> 
+    </div>
+    <div class="form-row">
         <label for="node-input-boilerLeadingDeviceTopic"><i class="fa fa-tasks"></i> Leading device topic</label>
         <input type="text" title="" id="node-input-boilerLeadingDeviceTopic"  placeholder="mqtt topic"></input>
        
@@ -131,7 +144,7 @@
     <div class="form-row">
         <label style="width:120px !important;" for="node-input-maxDurationSinceLastInput"><i class="fa fa-tasks"></i> Max duration</label>
         <input type="text" id="node-input-maxDurationSinceLastInput" style="width:60px !important; text-align: right;" placeholder="duration"></input>
-        <label for="node-input-maxDurationSinceLastInput" style="width:200px;"></i> min since last input</label>
+        <label for="node-input-maxDurationSinceLastInput" style="width:200px;"> min since last input</label>
     </div>
     <div class="form-row">
         <label for="node-input-boilerSecurity"><i class="fa fa-tasks"></i> Boiler security</label>
@@ -145,7 +158,7 @@
     <div class="form-row">
         <label style="width:120px !important;" for="node-input-defaultSp"><i class="fa fa-tasks"></i> Default set point</label>
         <input type="text" id="node-input-defaultSp" style="width:60px !important; text-align: right;" placeholder="duration"></input>
-        <label for="node-input-defaultSp" style="width:200px;"></i> °C</label>
+        <label for="node-input-defaultSp" style="width:200px;"> °C</label>
     </div>
     <div class="form-row">
         <label style="width:120px !important;" for="node-input-debugInfo"><i class="fa fa-tasks"></i> Debug info</label>

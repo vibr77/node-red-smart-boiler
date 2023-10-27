@@ -27,7 +27,10 @@ module.exports = function (RED) {
         this.mqttclient=null;
         this.mqttstack=[];                                              // Stack of MQTT message to be sent
         this.boilerTempTopic=n.boilerTempTopic;                         // MQTT Topic to update the boiler current temperature
-        this.boilerSpTopic=n.boilerSpTopic;                             // MQTT Topic to update the boiler set point temperature 
+        this.boilerSpTopic=n.boilerSpTopic;                             // MQTT Topic to update the boiler set point temperature
+        this.extTempEntity=n.extTempEntity;
+        this.extTempEntity=n.extTempBoilerTopic;
+        
         this.boilerLeadingDeviceTopic=n.boilerLeadingDeviceTopic;       // MQTT Topic to update the boiler Leading Device Topic (Text)
         this.mqttUpdates=n.mqttUpdates;                                 // Send MQTT updates
         this.outputUpdates=n.outputUpdates;                             // Send updates to output
@@ -44,6 +47,8 @@ module.exports = function (RED) {
         
         var node = this;
         
+
+
         node.activeItem=undefined;                                       // Current Active Valve as reference for the boiler sp>temp
         node.previousItem=undefined;                                     // Item of the stack sent to the boiler
       
@@ -86,28 +91,31 @@ module.exports = function (RED) {
             let bFound=false;                           // is the item exist in the stack
             let now = moment();                 
             
+            
             node.lastInputTs=now;
+            let sp=parseFloat(msg.setpoint)
+            let adjustedTemp=Math.round(parseFloat(msg.temperature));
+            let groupid=parseInt(msg.groupid)
             node.liveStack.forEach(function(item){
-                if (item.id==msg.id){                   // item is found in the stack
+                if (item.id==groupid){                   // item is found in the stack
                     bFound=true;
-                    item.sp=msg.setpoint;
+                    item.sp=sp;
                     item.name=msg.name;
-                    item.temp=msg.temperature;
+                    item.temp=adjustedTemp;
                     item.lastupdate= now.toISOString(); // last update timestamp of the item
                 }
             });
 
             if (bFound==false){                         // Not found add to the stack
                 let newItem={};
-                newItem.id=msg.id;
-                newItem.sp=msg.setpoint;
-                newItem.temp=msg.temperature;
+                newItem.id=groupid
+                newItem.sp=sp;
+                newItem.temp=adjustedTemp;
                 newItem.name=msg.name;
                 newItem.lastupdate= now.toISOString();
                 node.liveStack.push(newItem);
             }
             
-            nlog(JSON.stringify(node.liveStack));
             evaluate();                                 // Evaluate change straight away
             return;
         }
@@ -119,6 +127,15 @@ module.exports = function (RED) {
                             
             let now = moment();
             let diff=node.lastInputTs.diff(now,"m");
+
+            // check for external temperature
+
+            let externalTempEntity=global.get("homeassistant.homeAssistant.states['"+node.extTempEntity+"']");
+            if (externalTempEntity!==undefined && !isNaN(externalTempEntity.state)){
+                let t_ext=parseFloat(externalTempEntity.state);
+                let mqttmsg={topic:node.extTempBoilerTopic,payload:{temp:parseFloat(t_ext)},qos:0,retain:false};
+                node.mqttstack.push(mqttmsg);
+            }
 
             if (node.boilerSecurity==true && Math.abs(diff)>=node.maxDurationSinceLastInput){
 
@@ -132,7 +149,7 @@ module.exports = function (RED) {
                 }
 
                 if (node.mqttUpdates==true){
-                    mqttmsg={topic:node.boilerSpTopic,payload:parseInt(node.defaultSp),qos:0,retain:false};
+                    let mqttmsg={topic:node.boilerSpTopic,payload:parseInt(node.defaultSp),qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
 
                     mqttmsg={topic:node.boilerTempTopic,payload:parseInt(node.defaultTemp),qos:0,retain:false};
@@ -172,13 +189,17 @@ module.exports = function (RED) {
                 // node.activeItem equal to the active valve to be sent to the boiler
                 // node.passiveItem equal to the passive valve in case there is no activeItem
 
-                let itemGap=parseFloat(item.sp).toFixed(2)-parseFloat(item.temp).toFixed(2);
+                let itemGap=parseFloat(item.sp)-parseFloat(item.temp);
                 nlog("id:"+item.id+" itemGap:"+itemGap);
                 if (itemGap>node.activeItemGap){
                     node.activeItemGap=itemGap;
                     node.activeItem=item;
+                    nlog("become activeItem:"+item.id);
+                    
                 }else if (itemGap==node.activeItemGap && node.activeItem.sp<item.sp){
+                    node.activeItemGap=itemGap;
                     node.activeItem=item;
+                    nlog("become activeItem:"+item.id);
                 }
             });
 
@@ -200,6 +221,10 @@ module.exports = function (RED) {
             nlog("node.activeItemGap:"+node.activeItemGap);
             nlog("bFoundActiveValve:"+bFoundActiveValve);
             nlog("bUpdate:"+bUpdate);
+            if (node.activeItem)
+                nlog("activeItem:"+node.activeItem.name);
+            else
+                nlog("activeItem:undefined");
 
             if (node.activeItem!==undefined && (bUpdate==true || node.triggerMode=="triggerMode.everyCycle")){
 
@@ -208,12 +233,12 @@ module.exports = function (RED) {
                 
                 if (node.mqttUpdates==true){
                     
-                    mqttmsg={topic:node.boilerSpTopic,payload:parseInt(node.activeItem.sp),qos:0,retain:false};
+                    let mqttmsg={topic:node.boilerSpTopic,payload:parseInt(node.activeItem.sp),qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
 
                     mqttmsg={topic:node.boilerTempTopic,payload:parseInt(node.activeItem.temp),qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
-                    //let p=JSON.stringify();
+
                     mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:{value:node.activeItem.name},qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
                     
@@ -238,22 +263,65 @@ module.exports = function (RED) {
                 } 
             }
         }
+        
+        // INPUT MESSAGE MGNT
+        // Command: set
+        // Command: stack
+        //
+        // ***************************************************************************************
 
         node.on('input', function(msg) {
             
-            if (msg.payload===undefined || 
-                (msg.payload.setpoint===undefined     || 
-                 msg.payload.temperature===undefined   || 
-                 msg.payload.name===undefined   || 
-                 msg.payload.id===undefined)){
-                    node.error("input msg is invalid expecting msg.payload{setpoint:,temperature:,name:,id}");
+            if (msg.payload===undefined || msg.payload.command==undefined){
+                node.warn("input message is invalid returning");
+                return;
+            }
+  
+            if (msg.payload.command=="set"){ // Process new data item
+            
+                if( msg.payload.setpoint===undefined        || 
+                    msg.payload.temperature===undefined     || 
+                    msg.payload.name===undefined            || 
+                    msg.payload.groupid===undefined){
+                        node.error("input msg is invalid expecting msg.payload{command:'set',setpoint:,temperature:,name:,groupid}");
+                        return;
+                }
+
+                if( isNaN(msg.payload.setpoint) || isNaN(msg.payload.temperature) || isNaN(msg.payload.groupid)){
+                    node.error("invalid input msg format expect temperature, setpoint, id to be number");
                     return;
-                 }
-            if( isNaN(msg.payload.setpoint) || isNaN(msg.payload.temperature) || isNaN(msg.payload.id)){
-                node.error("invalid input msg format expect temperature, setpoint, id to be number");
-                    return;
-            } 
-            processInput(msg.payload);
+                } 
+                
+                processInput(msg.payload);
+        
+            }
+
+            else if (msg.payload.command=="trigger"){
+                let msg={};
+
+                msg.payload=node.activeItem;
+                node.send([msg,null]);
+
+                let mqttmsg={topic:node.boilerSpTopic,payload:parseInt(node.activeItem.sp),qos:0,retain:false};
+                node.mqttstack.push(mqttmsg);
+
+                mqttmsg={topic:node.boilerTempTopic,payload:parseInt(node.activeItem.temp),qos:0,retain:false};
+                node.mqttstack.push(mqttmsg);
+
+                mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:{value:node.activeItem.name},qos:0,retain:false};
+                node.mqttstack.push(mqttmsg);
+                    
+                sendMqtt();
+            }
+            else if (msg.payload.command=="stack"){ // output the current stack
+                
+                let msg={};
+
+                msg.payload=node.liveStack;
+                node.send([msg,null]);
+
+            }
+
         });
 
        
