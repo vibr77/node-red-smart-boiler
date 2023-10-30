@@ -18,6 +18,7 @@ var moment = require('moment'); // require
 const mqtt = require("mqtt");
 var pjson = require('./package.json');
 
+// Terminal command  node-red -v -D logging.console.level=trace
 
 module.exports = function (RED) {
     
@@ -29,7 +30,7 @@ module.exports = function (RED) {
         this.boilerTempTopic=n.boilerTempTopic;                         // MQTT Topic to update the boiler current temperature
         this.boilerSpTopic=n.boilerSpTopic;                             // MQTT Topic to update the boiler set point temperature
         this.extTempEntity=n.extTempEntity;
-        this.extTempEntity=n.extTempBoilerTopic;
+        this.extTempBoilerTopic=n.extTempBoilerTopic;
         
         this.boilerLeadingDeviceTopic=n.boilerLeadingDeviceTopic;       // MQTT Topic to update the boiler Leading Device Topic (Text)
         this.mqttUpdates=n.mqttUpdates;                                 // Send MQTT updates
@@ -45,6 +46,7 @@ module.exports = function (RED) {
         this.boilerSecurity=n.boilerSecurity?n.boilerSecurity:false;    // send security msg after max duration period
         this.liveStack=[];                                              // Stack of valve information 
         
+        var global = this.context().global;
         var node = this;
         
 
@@ -94,7 +96,9 @@ module.exports = function (RED) {
             
             node.lastInputTs=now;
             let sp=parseFloat(msg.setpoint)
-            let adjustedTemp=Math.round(parseFloat(msg.temperature));
+            //let adjustedTemp=Math.round(parseFloat(msg.temperature)); // <--- test ongoing
+
+            let adjustedTemp=parseFloat(msg.temperature);
             let groupid=parseInt(msg.groupid)
             node.liveStack.forEach(function(item){
                 if (item.id==groupid){                   // item is found in the stack
@@ -129,10 +133,11 @@ module.exports = function (RED) {
             let diff=node.lastInputTs.diff(now,"m");
 
             // check for external temperature
-
+            let t_ext=0;
             let externalTempEntity=global.get("homeassistant.homeAssistant.states['"+node.extTempEntity+"']");
+  
             if (externalTempEntity!==undefined && !isNaN(externalTempEntity.state)){
-                let t_ext=parseFloat(externalTempEntity.state);
+                t_ext=parseFloat(externalTempEntity.state);
                 let mqttmsg={topic:node.extTempBoilerTopic,payload:{temp:parseFloat(t_ext)},qos:0,retain:false};
                 node.mqttstack.push(mqttmsg);
             }
@@ -144,7 +149,7 @@ module.exports = function (RED) {
                
                 if (node.outputUpdates==true){
                     let msg={};
-                    msg.payload={temperature:node.defaultTemp,setpoint:node.defaultSp,name:"Security mode"};
+                    msg.payload={temperature:node.defaultTemp,setpoint:node.defaultSp,name:"Security mode",external_temperature:t_ext};
                     node.send([msg,null]);
                 }
 
@@ -230,16 +235,20 @@ module.exports = function (RED) {
 
                 let msg={};
                 msg.payload=node.activeItem;
+                msg.payload.external_temperature=t_ext;
                 
                 if (node.mqttUpdates==true){
                     
                     let mqttmsg={topic:node.boilerSpTopic,payload:parseInt(node.activeItem.sp),qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
 
-                    mqttmsg={topic:node.boilerTempTopic,payload:parseInt(node.activeItem.temp),qos:0,retain:false};
-                    node.mqttstack.push(mqttmsg);
+                    //mqttmsg={topic:node.boilerTempTopic,payload:parseInt(node.activeItem.temp),qos:0,retain:false}; // <-- test ongoing 
+                    //node.mqttstack.push(mqttmsg);
 
-                    mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:{value:node.activeItem.name},qos:0,retain:false};
+                    mqttmsg={topic:node.boilerTempTopic,payload:parseFloat(node.activeItem.temp),qos:0,retain:false};
+                    node.mqttstack.push(mqttmsg);
+                    let customMsg=node.activeItem.name+" (temp="+node.activeItem.temp+"°C, sp="+node.activeItem.sp+"°C)";
+                    mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:{value:customMsg},qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
                     
                     sendMqtt();
