@@ -31,7 +31,7 @@ module.exports = function (RED) {
         this.boilerSpTopic=n.boilerSpTopic;                             // MQTT Topic to update the boiler set point temperature
         this.extTempEntity=n.extTempEntity;
         this.extTempBoilerTopic=n.extTempBoilerTopic;
-        
+        this.boilerCHeatingSwTopic=n.boilerCHeatingSwTopic;
         this.boilerLeadingDeviceTopic=n.boilerLeadingDeviceTopic;       // MQTT Topic to update the boiler Leading Device Topic (Text)
         this.mqttUpdates=n.mqttUpdates;                                 // Send MQTT updates
         this.outputUpdates=n.outputUpdates;                             // Send updates to output
@@ -221,6 +221,15 @@ module.exports = function (RED) {
 
             if (node.activeItemGap>0){
                 bFoundActiveValve=true;
+                if (node.boilerCHeatingSwTopic===undefined || node.boilerCHeatingSwTopic=="")
+                    return;
+                let mqttmsg={topic:node.boilerCHeatingSwTopic,payload:1,qos:0,retain:false};
+                node.mqttstack.push(mqttmsg);
+            }else{
+                if (node.boilerCHeatingSwTopic===undefined || node.boilerCHeatingSwTopic=="")
+                    return;
+                let mqttmsg={topic:node.boilerCHeatingSwTopic,payload:0,qos:0,retain:false};
+                node.mqttstack.push(mqttmsg);
             }
 
             nlog("node.activeItemGap:"+node.activeItemGap);
