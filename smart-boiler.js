@@ -33,6 +33,7 @@ module.exports = function (RED) {
         this.extTempBoilerTopic=n.extTempBoilerTopic;
         this.boilerCHeatingSwTopic=n.boilerCHeatingSwTopic;
         this.boilerLeadingDeviceTopic=n.boilerLeadingDeviceTopic;       // MQTT Topic to update the boiler Leading Device Topic (Text)
+        this.boilerLeadingDeviceIdTopic=n.boilerLeadingDeviceIdTopic;  
         this.mqttUpdates=n.mqttUpdates;                                 // Send MQTT updates
         this.outputUpdates=n.outputUpdates;                             // Send updates to output
         this.triggerMode = n.triggerMode ? n.triggerMode : 'trigger.statechange.startup' // output / mqtt update mode
@@ -162,6 +163,9 @@ module.exports = function (RED) {
 
                     mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:{"value":"Security mode"},qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
+
+                    mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:{"value":0},qos:0,retain:false};
+                    node.mqttstack.push(mqttmsg);
                      
                     sendMqtt();
                 }
@@ -251,13 +255,16 @@ module.exports = function (RED) {
                     let mqttmsg={topic:node.boilerSpTopic,payload:parseInt(node.activeItem.sp),qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
 
-                    //mqttmsg={topic:node.boilerTempTopic,payload:parseInt(node.activeItem.temp),qos:0,retain:false}; // <-- test ongoing 
-                    //node.mqttstack.push(mqttmsg);
-
                     mqttmsg={topic:node.boilerTempTopic,payload:parseFloat(node.activeItem.temp),qos:0,retain:false};
                     node.mqttstack.push(mqttmsg);
-                    let customMsg=node.activeItem.name+" (temp="+node.activeItem.temp+"°C, sp="+node.activeItem.sp+"°C)";
-                    mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:{value:customMsg},qos:0,retain:false};
+                    
+                    mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:{value:node.activeItem.name},qos:0,retain:false};
+                    node.mqttstack.push(mqttmsg);
+
+                    if (node.boilerLeadingDeviceIdTopic!=undefined && node.boilerLeadingDeviceIdTopic!="" && node.activeItem!=undefined && node.activeItem.id!=undefined){
+                        mqttmsg={topic:node.boilerLeadingDeviceIdTopic,payload:{value:node.activeItem.id},qos:0,retain:false};
+                    }
+
                     node.mqttstack.push(mqttmsg);
                     
                     sendMqtt();
@@ -311,7 +318,6 @@ module.exports = function (RED) {
                 } 
                 
                 processInput(msg.payload);
-        
             }
 
             else if (msg.payload.command=="trigger"){
@@ -328,6 +334,11 @@ module.exports = function (RED) {
 
                 mqttmsg={topic:node.boilerLeadingDeviceTopic,payload:{value:node.activeItem.name},qos:0,retain:false};
                 node.mqttstack.push(mqttmsg);
+
+                if (node.boilerLeadingDeviceIdTopic!=undefined && node.boilerLeadingDeviceIdTopic!="" && node.activeItem!=undefined && node.activeItem.id!=undefined){
+                    mqttmsg={topic:node.boilerLeadingDeviceIdTopic,payload:{value:node.activeItem.id},qos:0,retain:false};
+                }
+                node.mqttstack.push(mqttmsg);
                     
                 sendMqtt();
             }
@@ -337,9 +348,7 @@ module.exports = function (RED) {
 
                 msg.payload=node.liveStack;
                 node.send([msg,null]);
-
             }
-
         });
 
        
