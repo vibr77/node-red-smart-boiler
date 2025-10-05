@@ -399,8 +399,13 @@ module.exports = function (RED) {
             setTimeout(evaluate, 1000)
         }
 
-        node.on('close', function() {
-            clearInterval(node.evalInterval)
+         node.on('close', function() {
+            nlog("closing connexion");
+            node.log('MQTT disconnecting');
+            clearInterval(node.evalInterval);
+            node.mqttclient.end();
+            done();
+
         })
 
     }
