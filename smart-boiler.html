@@ -6,15 +6,12 @@
         color: '#bdeeff',
         defaults: {
             name: {value:""},
-            topic:{value:""},
             mqttSettings: {value: "", type: "smart-boiler-settings"},
-            boilerTempTopic:{value:""},
             boilerSpTopic:{value:""},
             boilerLeadingDeviceTopic:{value:""},
             boilerLeadingDeviceIdTopic:{value:""},
-            extTempEntity:{value:""},
-            extTempBoilerTopic:{value:""},
-            boilerCHeatingSwTopic:{value:""},
+            boilerSwCentralHeatingTopic:{value:""},
+            boilerEntityID:{value:""},
             mqttUpdates:{value:false},
             debugInfo:{value:false},
             boilerSecurity:{value:false},
@@ -72,6 +69,28 @@
         },
         oneditprepare: function() {
             var node = this; 
+            $("#node-input-boilerEntityID").on('change', function() {
+                console.log("boilerEntityID changed, updating topics");
+                node.boilerEntityID = $("#node-input-boilerEntityID").val();
+
+                let prefix = (node.mqttSettings && node.mqttSettings.mqttRootPath) ? node.mqttSettings.mqttRootPath : "homeassistant";
+
+                let setpointTopic = prefix + "/" + node.boilerEntityID + "/setpointTemperature/set";
+                $("#node-input-boilerSpTopic").val(setpointTopic);
+
+                let swCentralHeatingTopic = prefix + "/" + node.boilerEntityID + "/swCentralHeating/set";
+                $("#node-input-boilerSwCentralHeatingTopic").val(swCentralHeatingTopic);
+
+                let tempTopic = prefix + "/" + node.boilerEntityID + "/currentTemperature/state";
+                $("#node-input-boilerTempTopic").val(tempTopic);
+
+                let leadingDeviceTopic = prefix + "/" + node.boilerEntityID + "/leadingDevice/state";
+                $("#node-input-boilerLeadingDeviceTopic").val(leadingDeviceTopic);
+                
+                let leadingDeviceIdTopic = prefix + "/" + node.boilerEntityID + "/leadingDeviceId/state";
+                $("#node-input-boilerLeadingDeviceIdTopic").val(leadingDeviceIdTopic);
+
+            });
         },
         oneditsave: function() {
             var node = this;  
@@ -83,152 +102,309 @@
 </script>
 
 <script type="text/html" data-template-name="smart-boiler">
+    <style>
+        .form-row label {
+            display: inline-block;
+            width: 180px !important;
+            white-space: nowrap;
+        }
+        .form-row input[type="text"] {
+            width: 250px !important;
+        }
+        .form-row input[type="checkbox"] {
+            width: 120px !important;
+        }
+    </style>
+
     <div class="form-row">
         <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
-        <input type="text" title="node & home asssitant device name" id="node-input-name" placeholder="Name">
-       
+        <input type="text" title="node & home asssitant device name" id="node-input-name" placeholder="Name">   
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Boiler entity</label>
+        <input type="text" title="node & home asssitant device name" id="node-input-boilerEntityID" placeholder="Smart boiler ID ">   
     </div>
     <div class="form-row">
-        <label for="node-input-topic"><i class="fa fa-tasks"></i> Topic</label>
-        <input type="text" title="msg output topic"  id="node-input-topic" placeholder="Topic"></input>
-    </div>
-    <div class="form-row">
-        <label for="node-input-mqttSettings"><i class="fa fa-globe"></i> Mqtt</label>
+        <label for="node-input-mqttSettings"><i class="fa fa-wrench"></i> MQTT</label>
         <input type="text" id="node-input-mqttSettings"></input>
     </div>
     <div class="form-row">
         <label for="node-input-mqttUpdates"><i class="fa fa-tasks"></i> Mqtt updates</label>
-        <input type="checkbox"title="" id="node-input-mqttUpdates"  placeholder="temqtt topicmp"></input>
+        <input type="checkbox" title="" id="node-input-mqttUpdates"></span>
     </div>
     <div class="form-row">
         <label for="node-input-outputUpdates"><i class="fa fa-tasks"></i> Output updates</label>
-        <input type="checkbox"title="" id="node-input-outputUpdates"  placeholder="temqtt topicmp"></input>
+        <input type="checkbox" title="" id="node-input-outputUpdates">
     </div>
     <div class="form-row">
-        <label for="node-input-boilerSpTopic"><i class="fa fa-tasks"></i> Set point topic</label>
-        <input type="text" title="" id="node-input-boilerSpTopic"  placeholder="temqtt topicmp"></input>
-        <label for="node-input-boilerSpTopic"></label> 
+        <label for="node-input-outputUpdates"><i class="fa fa-tasks"></i><b>Topic</b></label>
     </div>
     <div class="form-row">
-        <label for="node-input-boilerTempTopic"><i class="fa fa-tasks"></i> Temperature topic</label>
-        <input type="text" title="" id="node-input-boilerTempTopic"  placeholder="mqtt topic"></input>
-        <label for="node-input-boilerTempTopic"></label> 
+        <label for="node-input-boilerSpTopic"> Set point</label>
+        <input type="text" title="" id="node-input-boilerSpTopic" placeholder="mqtt topic">
     </div>
     <div class="form-row">
-        <label for="node-input-extTempBoilerTopic"><i class="fa fa-tasks"></i> External temperature topic</label>
-        <input type="text" title="" id="node-input-extTempBoilerTopic"  placeholder="mqtt topic"></input>
-        <label for="node-input-extTempBoilerTopic"></label> 
+        <label for="node-input-boilerTempTopic"> Temperature</label>
+        <input type="text" title="" id="node-input-boilerTempTopic" placeholder="mqtt topic">
     </div>
     
     <div class="form-row">
-        <label for="node-input-extTempEntity"><i class="fa fa-tasks"></i> External temperature</label>
-        <input type="text" title="" id="node-input-extTempEntity"  placeholder=""></input>
-        <label for="node-input-extTempEntity">entity</label> 
-    </div>
-    <div class="form-row">
-        <label for="node-input-boilerLeadingDeviceTopic"><i class="fa fa-tasks"></i> Leading device topic</label>
-        <input type="text" title="" id="node-input-boilerLeadingDeviceTopic"  placeholder="mqtt topic"></input>
+        <label for="node-input-boilerLeadingDeviceTopic"> Leading device</label>
+        <input type="text" title="" id="node-input-boilerLeadingDeviceTopic" placeholder="mqtt topic">
     </div>
 
     <div class="form-row">
-        <label for="node-input-boilerLeadingDeviceIdTopic"><i class="fa fa-tasks"></i> Leading device Id topic</label>
-        <input type="text" title="" id="node-input-boilerLeadingDeviceIdTopic"  placeholder="mqtt topic"></input>
+        <label for="node-input-boilerLeadingDeviceIdTopic"> Leading device Id</label>
+        <input type="text" title="" id="node-input-boilerLeadingDeviceIdTopic" placeholder="mqtt topic">
     </div>
 
     <div class="form-row">
-        <label for="node-input-boilerCHeatingSwTopic"><i class="fa fa-tasks"></i> Boiler Central Heating Sw Topic</label>
-        <input type="text" title="" id="node-input-boilerCHeatingSwTopic"  placeholder="mqtt topic"></input>
+        <label for="node-input-boilerSwCentralHeatingTopic"> SW Central Heating</label>
+        <input type="text" title="" id="node-input-boilerSwCentralHeatingTopic" placeholder="mqtt topic">
     </div>
 
     <div class="form-row">
-        <label style="width:120px !important;" for="node-input-cycleDuration"><i class="fa fa-tasks"></i> Update cycle</label>
-        <input type="text" id="node-input-cycleDuration" style="width:60px !important; text-align: right;" placeholder="duration"></input>
-        <label for="node-input-cycleDuration2"></i> s</label>
+        <label for="node-input-cycleDuration"><i class="fa fa-tasks"></i> Update cycle</label>
+        <input type="text" id="node-input-cycleDuration" style="width:60px !important; text-align: right;" placeholder="duration">
+        <span>s</span>
     </div>
     <div class="form-row">
         <label for="node-input-triggerMode"><i class="fa fa-play"></i> Trigger mode </label>
         <select id="node-input-triggerMode">
-          <option value="triggerMode.statechange">wWhen state changes</option>
+          <option value="triggerMode.statechange">When state changes</option>
           <option value="triggerMode.statechange.startup">When state changes + startup</option>
           <option value="triggerMode.everyCycle">Every cycle</option>
         </select>
     </div>
     <div class="form-row">
-        <label style="width:120px !important;" for="node-input-maxDurationSinceLastInput"><i class="fa fa-tasks"></i> Max duration</label>
-        <input type="text" id="node-input-maxDurationSinceLastInput" style="width:60px !important; text-align: right;" placeholder="duration"></input>
-        <label for="node-input-maxDurationSinceLastInput" style="width:200px;"> min since last input</label>
+        <label for="node-input-maxDurationSinceLastInput"><i class="fa fa-tasks"></i> Max duration</label>
+        <input type="text" id="node-input-maxDurationSinceLastInput" style="width:60px !important; text-align: right;" placeholder="duration">
+        <span> min since last input</span>
     </div>
     <div class="form-row">
         <label for="node-input-boilerSecurity"><i class="fa fa-tasks"></i> Boiler security</label>
-        <input type="checkbox" title="" id="node-input-boilerSecurity"  placeholder=""></input>
+        <input type="checkbox" title="" id="node-input-boilerSecurity" placeholder="">
     </div>
     <div class="form-row">
-        <label style="width:120px !important;" for="node-input-defaultTemp"><i class="fa fa-tasks"></i> Default Temp</label>
-        <input type="text" id="node-input-defaultTemp" style="width:60px !important; text-align: right;" placeholder="duration"></input>
-        <label for="node-input-defaultTemp" style="width:200px;"></i> °C</label>
+        <label for="node-input-defaultTemp"><i class="fa fa-tasks"></i> Default Temp</label>
+        <input type="text" id="node-input-defaultTemp" style="width:60px !important; text-align: right;" placeholder="duration">
+        <span> °C</span>
     </div>
     <div class="form-row">
-        <label style="width:120px !important;" for="node-input-defaultSp"><i class="fa fa-tasks"></i> Default set point</label>
-        <input type="text" id="node-input-defaultSp" style="width:60px !important; text-align: right;" placeholder="duration"></input>
-        <label for="node-input-defaultSp" style="width:200px;"> °C</label>
+        <label for="node-input-defaultSp"><i class="fa fa-tasks"></i> Default set point</label>
+        <input type="text" id="node-input-defaultSp" style="width:60px !important; text-align: right;" placeholder="duration">
+        <span> °C</span>
     </div>
     <div class="form-row">
-        <label style="width:120px !important;" for="node-input-debugInfo"><i class="fa fa-tasks"></i> Debug info</label>
-        <input type="checkbox" title="send debug information to the console" id="node-input-debugInfo"  ></input>
+        <label for="node-input-debugInfo"><i class="fa fa-bug">&nbsp;</i> Debug Level</label>
+        <select id="node-input-debugInfo">
+            <option value="none">None</option>
+            <option value="error">Error</option>
+            <option value="warn">Warning</option>
+            <option value="info">Info</option>
+            <option value="debug">Debug</option>
+        </select>
     </div>
     
 </script>
 
 <script type="text/html" data-help-name="smart-boiler">
-    <p>this node belongs to a suite of nodes to control heating made by multiple intelligent Valve and a Central Boiler.
-        The scheduling is done by Smart-Scheduler where multiple schedule and set-point can be defined,
-        The valve management is done by Smart-Valve where multiple valve can be grouped in one room or group of room. 
-        And finally Smart-Boiler aims to control the boiler and to determine the right temperature and set point seeting according to the multiple valves.
+    <!--
+    ╔══════════════════════════════════════════════════════════════════════════════╗
+    ║                           SMART-BOILER NODE                                  ║
+    ╚══════════════════════════════════════════════════════════════════════════════╝
+
+    OVERVIEW:
+    ---------
+    This node is part of an intelligent heating control system consisting of three 
+    main components:
+        • Smart-Scheduler: Manages multiple schedules and temperature set-points
+        • Smart-Valve: Controls and groups individual valves by room/zone
+        • Smart-Boiler: Central controller that determines optimal boiler temperature 
+                                        based on all connected valve states
+
+    PURPOSE:
+    --------
+    Smart-Boiler aggregates data from multiple Smart-Valve nodes to intelligently 
+    control the central heating boiler, ensuring efficient heating by prioritizing 
+    the valve with the greatest heating demand.
+
+    INPUT MESSAGE FORMAT:
+    --------------------
+    msg.payload = {
+            sp:     [number],       // Set-point (target temperature) in °C
+            temp:   [number],       // Current valve temperature in °C
+            name:   [string],       // Valve description (e.g., "Valve kitchen")
+            id:     [number]        // Unique valve identifier
+    }
+
+    Example:
+    msg.payload = { sp: 23, temp: 20, name: "Valve kitchen", id: 1 }
+
+    VALVE PROCESSING:
+    ----------------
+    • Each input message creates or updates a valve entry in the internal stack
+    • Valves are evaluated on each update cycle
+
+    ACTIVE VALVE SELECTION LOGIC:
+    -----------------------------
+    A valve is considered ACTIVE when: sp > temp (heating required)
+
+    The boiler is controlled by the valve with the HIGHEST temperature gap:
+            gap = sp - temp
+
+    Example Scenario:
+        • Valve A: sp=19°C, temp=21°C → INACTIVE (sp < temp)
+        • Valve B: sp=23°C, temp=20°C → gap=3°C (ACTIVE)
+        • Valve C: sp=24°C, temp=19°C → gap=5°C (ACTIVE - CONTROLS BOILER)
         
-        <b>Smart-Boiler</b>
-        Received input from Smart-Valves and expect message as :
-        msg.payload with:
-        - sp for setpoint, int value
-        - temp for current valve temperature, int value,
-        - name for valve description, string value,
-        - id for unique valve identification, int value
+    Result: Valve C drives the boiler with sp=24°C, temp=19°C
 
-        ex input message:
-        msg.payload={ sp:23,temp:20,name:"Valve kitchen", id:1}
+    FALLBACK RULES:
+    --------------
+    • No active valves: The highest set-point among inactive valves is used as 
+                                            the boiler reference
+    • Input timeout: If no input received within max duration, a safety message 
+                                     is sent with default values to prevent continuous heating
 
-        Each input received will either create a new entry in the valves stack or update the current entry in the stack.
+    OUTPUT MODES:
+    ------------
+    1. MQTT Output (Recommended):
+         - Set-point topic: Publishes boiler target temperature
+         - Temperature topic: Publishes current reference temperature
+         - Leading device topic: Publishes name of controlling valve
 
-        Smart-Boiler will determined the active valve to be sent to the Boiler, the active valve is determine by valve set point (target temperature) > valve current temperature 
-        and by the highest gap between set point and current temperature.
+    2. Standard Node Output:
+         msg.payload = {
+                 sp: [number],
+                 temp: [number],
+                 name: [string],
+                 id: [number],
+                 lastTsUpdate: [ISO 8601 timestamp]
+         }
 
-        Exemple : 
-        - Valve A : set point 19°C, current temperature 21 °C => inactive
-        - Valve B : set point 23°C, current temperature 20 °C, gap is 3 °C => active but not sent to boiler,
-        - Valve C : set point is 24°C and current temperature is 19°C, gap is 5°C => active and sent to the boiler.
-        
-        Additionnal functionnal rules:
-        
-        - If no active valve is found then highest sp of inactive valve is set as a reference to the boiler. 
-        - If no input after max duration (defined in setting), security message is sent to the boiler to avoid endless heating,
-        
-        Output: 
-        - Can be directly to MQTT (preferred);
-        - regular output: 
+    CONFIGURATION PARAMETERS:
+    ------------------------
+    ┌─────────────────────────────────┬──────────────────────────────────────────┐
+    │ Parameter                       │ Description                              │
+    ├─────────────────────────────────┼──────────────────────────────────────────┤
+    │ MQTT                            │ MQTT broker connection configuration     │
+    │ MQTT updates                    │ Enable direct MQTT publishing            │
+    │ Output updates                  │ Enable standard node output              │
+    │ Set point topic                 │ MQTT topic for boiler set-point          │
+    │ Temperature topic               │ MQTT topic for boiler current temp       │
+    │ Leading Device topic            │ MQTT topic for active valve name         │
+    │ Update cycle duration           │ Interval for valve stack evaluation      │
+    │ Max duration since last input   │ Timeout before safety mode activation    │
+    │ Default temp                    │ Safety mode default temperature          │
+    │ Default set point               │ Safety mode default set-point            │
+    └─────────────────────────────────┴──────────────────────────────────────────┘
 
-        msg.payload={ sp:23,temp:20,name:"Valve kitchen", id:1, lastTsUpdate: ISOTIME};
+    SAFETY FEATURES:
+    ---------------
+    • Watchdog timer prevents endless heating if valve communication fails
+    • Configurable default values ensure safe operation during failures
+    • Timeout triggers automatic fallback to safe temperature settings
 
-        Configuration settings: 
+ 
 
-        MQTT: configuration node to define mqtt server connexion
-        MQTT updates: when checked, update messages are directly sent to the defined topics
-        Output updates: when checked, update messages are sent to the regular output,
-        Set point topic: MQTT set Boiler set point topic
-        Temperature topic: MQTT set Boiler current temperature topic
-        Leading Device topic: MQTT Boiler text topic to indicate which valves is driving the heating
-        Update cycle duration: valve stack evaluation duration cycle
-        Max Duration since last input: maximum duration before sending security message to the boiler with default values
-        Default temp: security message is sent with default temp
-        Default set point: security message is sent with default set point
+    </pre>
+    -->
+    <div style="font-family: monospace;"></div>
+        <h2 style="border: 2px solid #333; padding: 10px; text-align: center; background-color: #f0f0f0;">SMART-BOILER NODE</h2>
 
-    </p>
+        <h3>OVERVIEW:</h3>
+        <p>This node is part of an intelligent heating control system consisting of three main components:</p>
+        <ul>
+            <li><strong>Smart-Scheduler:</strong> Manages multiple schedules and temperature set-points</li>
+            <li><strong>Smart-Valve:</strong> Controls and groups individual valves by room/zone</li>
+            <li><strong>Smart-Boiler:</strong> Central controller that determines optimal boiler temperature based on all connected valve states</li>
+        </ul>
+
+        <h3>PURPOSE:</h3>
+        <p>Smart-Boiler aggregates data from multiple Smart-Valve nodes to intelligently control the central heating boiler, ensuring efficient heating by prioritizing the valve with the greatest heating demand.</p>
+
+        <h3>INPUT MESSAGE FORMAT:</h3>
+        <pre><code>msg.payload = {
+        sp:     [number],       // Set-point (target temperature) in °C
+        temp:   [number],       // Current valve temperature in °C
+        name:   [string],       // Valve description (e.g., "Valve kitchen")
+        id:     [number]        // Unique valve identifier
+    }
+
+    Example:
+    msg.payload = { sp: 23, temp: 20, name: "Valve kitchen", id: 1 }</code></pre>
+
+        <h3>VALVE PROCESSING:</h3>
+        <ul>
+            <li>Each input message creates or updates a valve entry in the internal stack</li>
+            <li>Valves are evaluated on each update cycle</li>
+        </ul>
+
+        <h3>ACTIVE VALVE SELECTION LOGIC:</h3>
+        <p>A valve is considered <strong>ACTIVE</strong> when: <code>sp &gt; temp</code> (heating required)</p>
+        <p>The boiler is controlled by the valve with the <strong>HIGHEST</strong> temperature gap:</p>
+        <pre><code>gap = sp - temp</code></pre>
+
+        <h4>Example Scenario:</h4>
+        <ul>
+            <li>Valve A: sp=19°C, temp=21°C → <strong>INACTIVE</strong> (sp &lt; temp)</li>
+            <li>Valve B: sp=23°C, temp=20°C → gap=3°C (<strong>ACTIVE</strong>)</li>
+            <li>Valve C: sp=24°C, temp=19°C → gap=5°C (<strong>ACTIVE - CONTROLS BOILER</strong>)</li>
+        </ul>
+        <p><strong>Result:</strong> Valve C drives the boiler with sp=24°C, temp=19°C</p>
+
+        <h3>FALLBACK RULES:</h3>
+        <ul>
+            <li><strong>No active valves:</strong> The highest set-point among inactive valves is used as the boiler reference</li>
+            <li><strong>Input timeout:</strong> If no input received within max duration, a safety message is sent with default values to prevent continuous heating</li>
+        </ul>
+
+        <h3>OUTPUT MODES:</h3>
+        <h4>1. MQTT Output (Recommended):</h4>
+        <ul>
+            <li>Set-point topic: Publishes boiler target temperature</li>
+            <li>Temperature topic: Publishes current reference temperature</li>
+            <li>Leading device topic: Publishes name of controlling valve</li>
+        </ul>
+
+        <h4>2. Standard Node Output:</h4>
+        <pre><code>msg.payload = {
+        sp: [number],
+        temp: [number],
+        name: [string],
+        id: [number],
+        lastTsUpdate: [ISO 8601 timestamp]
+    }</code></pre>
+
+        <h3>CONFIGURATION PARAMETERS:</h3>
+        <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+            <thead>
+                <tr style="background-color: #e0e0e0;">
+                    <th>Parameter</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>MQTT</td><td>MQTT broker connection configuration</td></tr>
+                <tr><td>MQTT updates</td><td>Enable direct MQTT publishing</td></tr>
+                <tr><td>Output updates</td><td>Enable standard node output</td></tr>
+                <tr><td>Set point topic</td><td>MQTT topic for boiler set-point</td></tr>
+                <tr><td>Temperature topic</td><td>MQTT topic for boiler current temp</td></tr>
+                <tr><td>Leading Device topic</td><td>MQTT topic for active valve name</td></tr>
+                <tr><td>Update cycle duration</td><td>Interval for valve stack evaluation</td></tr>
+                <tr><td>Max duration since last input</td><td>Timeout before safety mode activation</td></tr>
+                <tr><td>Default temp</td><td>Safety mode default temperature</td></tr>
+                <tr><td>Default set point</td><td>Safety mode default set-point</td></tr>
+            </tbody>
+        </table>
+
+        <h3>SAFETY FEATURES:</h3>
+        <ul>
+            <li>Watchdog timer prevents endless heating if valve communication fails</li>
+            <li>Configurable default values ensure safe operation during failures</li>
+            <li>Timeout triggers automatic fallback to safe temperature settings</li>
+        </ul>
+    </div>
 </script>
