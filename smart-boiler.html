@@ -7,14 +7,24 @@
         defaults: {
             name: {value:""},
             mqttSettings: {value: "", type: "smart-boiler-settings"},
-            boilerSpTopic:{value:""},
-            boilerLeadingDeviceTopic:{value:""},
-            boilerLeadingDeviceIdTopic:{value:""},
-            boilerSwCentralHeatingTopic:{value:""},
+            
+            boilerCurrentTemperatureSetTopic:{value:""},
+            boilerCurrentTemperatureKey:{value:""},
+            boilerSpSetTopic:{value:""},
+            boilerSpKey:{value:""},
+
+            boilerLeadingDeviceSetTopic:{value:""},
+            boilerLeadingDeviceIdSetTopic:{value:""},
+            boilerLeadingDeviceKey:{value:""},
+
+            boilerSwCentralHeatingSetTopic:{value:""},
+            boilerSwCentralHeatingKey:{value:""},
+
             boilerEntityID:{value:""},
             mqttUpdates:{value:false},
-            debugInfo:{value:false},
+            debugInfo:{value:"none"},
             boilerSecurity:{value:false},
+
             triggerMode:{value:"triggerMode.statechange.startup",required: true},
             cycleDuration: {value:60,required: true,validate:function(v) {
                 if (isNaN(v)){
@@ -64,6 +74,31 @@
         inputs:1,
         outputs:1,
         icon: "font-awesome/fa-fire",
+        button: {
+            onclick: function() {
+                let node=this;
+                $.ajax({
+                    url: "smartboiler/" + node.id,
+                    type: "POST",
+                    data: JSON.stringify({payload:{command:"trigger"}}),
+                    contentType: "application/json; charset=utf-8",
+                    success: function (resp) {
+                        RED.notify(node._("smart-boiler trigger success", { label: "ss" }), { type: "success", id: "inject", timeout: 2000 });
+                    },
+                    error: function (jqXHR, textStatus, errorThrown) {
+                        if (jqXHR.status == 404) {
+                            RED.notify(node._("common.notification.error", { message: node._("common.notification.errors.not-deployed") }), "error");
+                        } else if (jqXHR.status == 500) {
+                            RED.notify(node._("common.notification.error", { message: node._("inject.errors.failed") }), "error");
+                        } else if (jqXHR.status == 0) {
+                            RED.notify(node._("common.notification.error", { message: node._("common.notification.errors.no-response") }), "error");
+                        } else {
+                            RED.notify(node._("common.notification.error", { message: node._("common.notification.errors.unexpected", { status: jqXHR.status, message: textStatus }) }), "error");
+                        }
+                    }
+                });
+            }
+        },
         label: function() {
             return this.name||"smart-boiler";
         },
@@ -75,22 +110,33 @@
 
                 let prefix = (node.mqttSettings && node.mqttSettings.mqttRootPath) ? node.mqttSettings.mqttRootPath : "homeassistant";
 
-                let setpointTopic = prefix + "/" + node.boilerEntityID + "/setpointTemperature/set";
-                $("#node-input-boilerSpTopic").val(setpointTopic);
-
-                let swCentralHeatingTopic = prefix + "/" + node.boilerEntityID + "/swCentralHeating/set";
-                $("#node-input-boilerSwCentralHeatingTopic").val(swCentralHeatingTopic);
-
-                let tempTopic = prefix + "/" + node.boilerEntityID + "/currentTemperature/state";
-                $("#node-input-boilerTempTopic").val(tempTopic);
-
-                let leadingDeviceTopic = prefix + "/" + node.boilerEntityID + "/leadingDevice/state";
-                $("#node-input-boilerLeadingDeviceTopic").val(leadingDeviceTopic);
+                if ($("#node-input-boilerSpSetTopic").val().length==0){
+                    let setpointTopic = prefix + "/" + node.boilerEntityID + "/setpoint-temperature/set";
+                    $("#node-input-boilerSpSetTopic").val(setpointTopic);
+                }
                 
-                let leadingDeviceIdTopic = prefix + "/" + node.boilerEntityID + "/leadingDeviceId/state";
-                $("#node-input-boilerLeadingDeviceIdTopic").val(leadingDeviceIdTopic);
+                if ($("#node-input-boilerSwCentralHeatingSetTopic").val().length==0){
+                     let swCentralHeatingTopic = prefix + "/" + node.boilerEntityID + "/swCentralHeating/set";
+                    $("#node-input-boilerSwCentralHeatingSetTopic").val(swCentralHeatingTopic);
+                }
+               
+               
+                if ($("#node-input-boilerCurrentTemperatureSetTopic").val().length==0){
+                    let tempTopic = prefix + "/" + node.boilerEntityID + "/current-temperature/state";
+                    $("#node-input-boilerCurrentTemperatureSetTopic").val(tempTopic);
+                }
 
+                if ($("#node-input-boilerLeadingDeviceSetTopic").val().length==0){
+                    let leadingDeviceTopic = prefix + "/" + node.boilerEntityID + "/leadingDevice/state";
+                    $("#node-input-boilerLeadingDeviceSetTopic").val(leadingDeviceTopic);
+                }
+                
+                if ($("#node-input-boilerLeadingDeviceIdSetTopic").val().length==0){
+                    let leadingDeviceIdTopic = prefix + "/" + node.boilerEntityID + "/leadingDeviceId/state";
+                    $("#node-input-boilerLeadingDeviceIdSetTopic").val(leadingDeviceIdTopic);
+                }
             });
+           
         },
         oneditsave: function() {
             var node = this;  
@@ -117,60 +163,99 @@
     </style>
 
     <div class="form-row">
-        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <label for="node-input-name"><i class="fa fa-tag">&nbsp;</i> Name</label>
         <input type="text" title="node & home asssitant device name" id="node-input-name" placeholder="Name">   
     </div>
 
     <div class="form-row">
-        <label for="node-input-name"><i class="fa fa-tag"></i> Boiler entity</label>
+        <label for="node-input-name"><i class="fa fa-tag">&nbsp;</i> Boiler entity</label>
         <input type="text" title="node & home asssitant device name" id="node-input-boilerEntityID" placeholder="Smart boiler ID ">   
     </div>
     <div class="form-row">
-        <label for="node-input-mqttSettings"><i class="fa fa-wrench"></i> MQTT</label>
+        <label for="node-input-mqttSettings"><i class="fa fa-wrench">&nbsp;</i> MQTT</label>
         <input type="text" id="node-input-mqttSettings"></input>
     </div>
     <div class="form-row">
-        <label for="node-input-mqttUpdates"><i class="fa fa-tasks"></i> Mqtt updates</label>
+        <label for="node-input-mqttUpdates"><i class="fa fa-tasks">&nbsp;</i> Mqtt updates</label>
         <input type="checkbox" title="" id="node-input-mqttUpdates"></span>
     </div>
     <div class="form-row">
-        <label for="node-input-outputUpdates"><i class="fa fa-tasks"></i> Output updates</label>
+        <label for="node-input-outputUpdates"><i class="fa fa-tasks">&nbsp;</i> Output updates</label>
         <input type="checkbox" title="" id="node-input-outputUpdates">
     </div>
+
     <div class="form-row">
-        <label for="node-input-outputUpdates"><i class="fa fa-tasks"></i><b>Topic</b></label>
-    </div>
-    <div class="form-row">
-        <label for="node-input-boilerSpTopic"> Set point</label>
-        <input type="text" title="" id="node-input-boilerSpTopic" placeholder="mqtt topic">
-    </div>
-    <div class="form-row">
-        <label for="node-input-boilerTempTopic"> Temperature</label>
-        <input type="text" title="" id="node-input-boilerTempTopic" placeholder="mqtt topic">
-    </div>
-    
-    <div class="form-row">
-        <label for="node-input-boilerLeadingDeviceTopic"> Leading device</label>
-        <input type="text" title="" id="node-input-boilerLeadingDeviceTopic" placeholder="mqtt topic">
+        <span><i class="fa fa-tasks">&nbsp;</i>Current temperature</span>
     </div>
 
     <div class="form-row">
-        <label for="node-input-boilerLeadingDeviceIdTopic"> Leading device Id</label>
-        <input type="text" title="" id="node-input-boilerLeadingDeviceIdTopic" placeholder="mqtt topic">
+        <label for="node-input-boilerCurrentTemperatureSetTopic">Set</label>
+        <input type="text" id="node-input-boilerCurrentTemperatureSetTopic" placeholder="mqtt topic"></input>
     </div>
 
     <div class="form-row">
-        <label for="node-input-boilerSwCentralHeatingTopic"> SW Central Heating</label>
-        <input type="text" title="" id="node-input-boilerSwCentralHeatingTopic" placeholder="mqtt topic">
+        <label for="node-input-boilerCurrentTemperatureKey">Key</label>
+        <input type="text" id="node-input-boilerCurrentTemperatureKey" placeholder="mqtt key"></input>
     </div>
 
     <div class="form-row">
-        <label for="node-input-cycleDuration"><i class="fa fa-tasks"></i> Update cycle</label>
+        <span><i class="fa fa-tasks">&nbsp;</i>Set point temperature</span>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-boilerSpSetTopic">Set</label>
+        <input type="text" id="node-input-boilerSpSetTopic" placeholder="mqtt topic"></input>
+    </div>
+
+     <div class="form-row">
+        <label for="node-input-boilerSpKey">Key</label>
+        <input type="text" id="node-input-boilerSpKey" placeholder="mqtt key"></input>
+    </div>
+
+    <div class="form-row">
+        <span><i class="fa fa-tasks">&nbsp;</i>Leading Device</span>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-boilerLeadingDeviceSetTopic">Set name</label>
+        <input type="text" title="" id="node-input-boilerLeadingDeviceSetTopic" placeholder="mqtt topic">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-boilerLeadingDeviceIdSetTopic">Set Id</label>
+        <input type="text" title="" id="node-input-boilerLeadingDeviceIdSetTopic" placeholder="mqtt topic">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-boilerLeadingDeviceKey">Key</label>
+        <input type="text" title="" id="node-input-boilerLeadingDeviceKey" placeholder="mqtt topic">
+    </div>
+
+    <div class="form-row">
+        <span><i class="fa fa-tasks">&nbsp;</i>Central Heating Switch</span>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-boilerSwCentralHeatingSetTopic">Set</label>
+        <input type="text" title="" id="node-input-boilerSwCentralHeatingSetTopic" placeholder="mqtt topic">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-boilerSwCentralHeatingKey">Key</label>
+        <input type="text" title="" id="node-input-boilerSwCentralHeatingKey" placeholder="mqtt topic">
+    </div>
+
+     <div class="form-row">
+        <span><i class="fa fa-tasks">&nbsp;</i>Update</span>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-cycleDuration"><i class="fa fa-tasks">&nbsp;</i>Cycle</label>
         <input type="text" id="node-input-cycleDuration" style="width:60px !important; text-align: right;" placeholder="duration">
         <span>s</span>
     </div>
     <div class="form-row">
-        <label for="node-input-triggerMode"><i class="fa fa-play"></i> Trigger mode </label>
+        <label for="node-input-triggerMode"><i class="fa fa-play">&nbsp;</i> Trigger mode </label>
         <select id="node-input-triggerMode">
           <option value="triggerMode.statechange">When state changes</option>
           <option value="triggerMode.statechange.startup">When state changes + startup</option>
@@ -178,16 +263,16 @@
         </select>
     </div>
     <div class="form-row">
-        <label for="node-input-maxDurationSinceLastInput"><i class="fa fa-tasks"></i> Max duration</label>
+        <label for="node-input-maxDurationSinceLastInput"><i class="fa fa-tasks">&nbsp;</i> Max duration</label>
         <input type="text" id="node-input-maxDurationSinceLastInput" style="width:60px !important; text-align: right;" placeholder="duration">
         <span> min since last input</span>
     </div>
     <div class="form-row">
-        <label for="node-input-boilerSecurity"><i class="fa fa-tasks"></i> Boiler security</label>
+        <label for="node-input-boilerSecurity"><i class="fa fa-tasks">&nbsp;</i>Security</label>
         <input type="checkbox" title="" id="node-input-boilerSecurity" placeholder="">
     </div>
     <div class="form-row">
-        <label for="node-input-defaultTemp"><i class="fa fa-tasks"></i> Default Temp</label>
+        <label for="node-input-defaultTemp"><i class="fa fa-tasks"></i> Default temp</label>
         <input type="text" id="node-input-defaultTemp" style="width:60px !important; text-align: right;" placeholder="duration">
         <span> °C</span>
     </div>
@@ -233,14 +318,15 @@
     INPUT MESSAGE FORMAT:
     --------------------
     msg.payload = {
-            sp:     [number],       // Set-point (target temperature) in °C
-            temp:   [number],       // Current valve temperature in °C
-            name:   [string],       // Valve description (e.g., "Valve kitchen")
-            id:     [number]        // Unique valve identifier
+            command: "set",         // Required
+            setpoint: [number],     // Set-point (target temperature) in °C
+            temperature: [number],  // Current valve temperature in °C
+            requestedBy: [string],  // Valve description/ID (e.g., "Valve kitchen")
+            groupId: [number]       // Group ID
     }
 
     Example:
-    msg.payload = { sp: 23, temp: 20, name: "Valve kitchen", id: 1 }
+    msg.payload = { command: "set", setpoint: 23, temperature: 20, requestedBy: "Valve kitchen", groupId: 1 }
 
     VALVE PROCESSING:
     ----------------
@@ -280,8 +366,9 @@
                  sp: [number],
                  temp: [number],
                  name: [string],
-                 id: [number],
-                 lastTsUpdate: [ISO 8601 timestamp]
+                 id: [string],
+                 groupId: [number],
+                 lastupdate: [ISO 8601 timestamp]
          }
 
     CONFIGURATION PARAMETERS:
@@ -327,14 +414,15 @@
 
         <h3>INPUT MESSAGE FORMAT:</h3>
         <pre><code>msg.payload = {
-        sp:     [number],       // Set-point (target temperature) in °C
-        temp:   [number],       // Current valve temperature in °C
-        name:   [string],       // Valve description (e.g., "Valve kitchen")
-        id:     [number]        // Unique valve identifier
+        command: "set",         // Required
+        setpoint: [number],     // Set-point (target temperature) in °C
+        temperature: [number],  // Current valve temperature in °C
+        requestedBy: [string],  // Valve description/ID (e.g., "Valve kitchen")
+        groupId: [number]       // Group ID
     }
 
     Example:
-    msg.payload = { sp: 23, temp: 20, name: "Valve kitchen", id: 1 }</code></pre>
+    msg.payload = { command: "set", setpoint: 23, temperature: 20, requestedBy: "Valve kitchen", groupId: 1 }</code></pre>
 
         <h3>VALVE PROCESSING:</h3>
         <ul>
@@ -342,10 +430,20 @@
             <li>Valves are evaluated on each update cycle</li>
         </ul>
 
-        <h3>ACTIVE VALVE SELECTION LOGIC:</h3>
+        <h3>BUSINESS RULES:</h3>
+        <h4>Valve Activation Condition:</h4>
         <p>A valve is considered <strong>ACTIVE</strong> when: <code>sp &gt; temp</code> (heating required)</p>
         <p>The boiler is controlled by the valve with the <strong>HIGHEST</strong> temperature gap:</p>
         <pre><code>gap = sp - temp</code></pre>
+
+        <h4>Target Conditions on Input:</h4>
+        <ul>
+            <li><strong>Valid input requires:</strong> <code>msg.payload.command === "set"</code> AND <code>msg.topic</code> matches configured pattern</li>
+            <li><strong>Message processing:</strong> Each input creates or updates a valve entry in the internal stack (liveStack)</li>
+            <li><strong>Stack management:</strong> Valve entries are indexed by <code>requestedBy</code> (valve name/ID)</li>
+            <li><strong>Cycle trigger:</strong> Every valid input triggers an evaluation cycle to determine the active valve</li>
+            <li><strong>Timestamp tracking:</strong> Each valve entry records <code>lastupdate</code> for timeout monitoring</li>
+        </ul>
 
         <h4>Example Scenario:</h4>
         <ul>
@@ -374,8 +472,9 @@
         sp: [number],
         temp: [number],
         name: [string],
-        id: [number],
-        lastTsUpdate: [ISO 8601 timestamp]
+        id: [string],
+        groupId: [number],
+        lastupdate: [ISO 8601 timestamp]
     }</code></pre>
 
         <h3>CONFIGURATION PARAMETERS:</h3>
@@ -405,6 +504,7 @@
             <li>Watchdog timer prevents endless heating if valve communication fails</li>
             <li>Configurable default values ensure safe operation during failures</li>
             <li>Timeout triggers automatic fallback to safe temperature settings</li>
+            <li><strong>State Persistence:</strong> The node automatically saves the complete valve stack and boiler state to <code>~/.node-red/.node-red-state/boiler-{node-id}.json</code>. This includes all connected valves, their temperatures, setpoints, and the active valve selection. State is restored on Node-RED restarts and flow redeployments, ensuring seamless operation continuity.</li>
         </ul>
     </div>
 </script>

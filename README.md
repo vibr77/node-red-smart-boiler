@@ -15,6 +15,7 @@ This node is designed to integrate with Home Assistant via MQTT and can optional
 *   **Safety Watchdog**: Automatically reverts to safe defaults if no updates are received from valves within a configurable timeframe.
 *   **MQTT Integration**: Publishes boiler status, setpoint, and the name of the "Leading Device" (the valve driving the boiler) to MQTT.
 *   **Message Storm Protection**: Prevents processing overload by limiting the rate of incoming messages.
+*   **State Persistence**: Automatically saves and restores the complete valve stack and boiler state across Node-RED restarts and flow deploys.
 
 ## Input Message Format
 
@@ -63,6 +64,27 @@ If no valid input is received for a duration exceeding **Max duration since last
 *   It publishes the **Default Temp** and **Default Setpoint** to the boiler.
 *   This prevents the boiler from getting stuck in a "Heating" state if the control network fails.
 
+## Business Rules
+
+### Valve Activation Condition
+A valve is considered **ACTIVE** when:
+```
+sp > temp
+```
+The boiler is controlled by the valve with the **HIGHEST** temperature gap:
+```
+gap = sp - temp
+```
+
+### Target Conditions on Input
+*   **Valid input requires**: `msg.payload.command === "set"` AND `msg.topic` matches the configured MQTT topic pattern
+*   **Message processing**: Each input creates or updates a valve entry in the internal stack (liveStack)
+*   **Stack management**: Valve entries are indexed by `requestedBy` (valve name/ID), ensuring unique valve identification
+*   **Cycle trigger**: Every valid input triggers an evaluation cycle to determine the active valve
+*   **Timestamp tracking**: Each valve entry records `lastupdate` for timeout monitoring
+*   **Security timeout**: If no updates received within configured duration, system enters safe mode with default values
+*   **Command filtering**: Only "set" commands are processed for valve updates; "trigger" forces immediate re-evaluation; "stack" outputs debug information
+
 ## Configuration
 
 | Parameter | Description |
@@ -99,6 +121,25 @@ msg.payload = {
     groupId: 1
 }
 ```
+
+## State Persistence
+
+The node automatically saves its complete state to the file system at `~/.node-red/.node-red-state/boiler-{node-id}.json`. This includes:
+
+*   **liveStack**: Complete array of all connected valves with their setpoints and temperatures
+*   **activeItem**: Current active valve controlling the boiler
+*   **previousItem**: Previous active valve
+*   **previousActiveItemSp**: Previous setpoint for change detection
+*   **activeItemGap**: Current temperature gap
+*   **lastInputTs**: Timestamp of last received input
+*   **timestamp**: Last save timestamp
+
+This state is automatically restored when:
+*   Node-RED restarts
+*   Flows are redeployed
+*   Node is reinitialized
+
+The state file persists independently of Node-RED's context storage, ensuring the boiler remembers all connected valves and their states even after complete system restarts or redeployments. This prevents loss of heating control context and ensures seamless operation continuity.
 
 ## Installation
 1.  Install via Node-RED Palette Manager or `npm install`.
