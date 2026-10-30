@@ -219,7 +219,7 @@ module.exports = function (RED) {
                     } else {
                         msgstr = msg.payload.toString();
                     }
-                    
+                    nlog("Publishing to topic: "+msg.topic+", payload: "+msgstr,"debug");
                     node.mqttclient.publish(msg.topic.toString(),msgstr,{ qos: msg.qos, retain: msg.retain },(error) => {
                         if (error) {
                             node.error("mqtt error: "+error)
@@ -318,9 +318,9 @@ module.exports = function (RED) {
             if (node.boilerLeadingDeviceIdSetTopic!=undefined && node.boilerLeadingDeviceIdSetTopic.trim()!="" && node.activeItem!=undefined && node.activeItem.id!=undefined){
                 let payload = {};
                 if (node.boilerLeadingDeviceKey && node.boilerLeadingDeviceKey.trim()!=""){
-                    payload[node.boilerLeadingDeviceKey] = node.activeItem.id;
+                    payload[node.boilerLeadingDeviceKey] = parseInt(node.activeItem.groupId);
                 } else {
-                    payload = node.activeItem.id;
+                    payload = parseInt(node.activeItem.groupId);
                 }
 
                 let mqttmsg={topic:node.boilerLeadingDeviceIdSetTopic,payload:payload,qos:0,retain:false};
