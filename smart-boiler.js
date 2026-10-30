@@ -1,10 +1,10 @@
 
 /*
 __   _____ ___ ___        Author: Vincent BESSON
- \ \ / /_ _| _ ) _ \      Release: 0.80
-  \ V / | || _ \   /      Date: 20251201
+ \ \ / /_ _| _ ) _ \      Release: 0.82
+  \ V / | || _ \   /      Date: 20261030
    \_/ |___|___/_|_\      Description: Nodered Heating Boiler Management
-                2025      Licence: Creative Commons
+                2026      Licence: Creative Commons
 ______________________
 */ 
 
@@ -65,6 +65,23 @@ module.exports = function (RED) {
         this.debugInfo=n.debugInfo ? n.debugInfo:false                  // boolean flag to trigger debug information to the console.
         this.mqttSettings = RED.nodes.getNode(n.mqttSettings);          // MQTT connexion settings
         this.boilerSecurity=n.boilerSecurity?n.boilerSecurity:false;    // send security msg after max duration period
+
+        // --- Hardening (0.82) ---------------------------------------------------------------
+        // itemMaxAge: minutes after which a valve that stopped reporting is ignored (0 = off).
+        //             Needs smart-valve >= 0.82 (heartbeat) so quiet but healthy rooms keep refreshing.
+        // maxSp:      hard ceiling on any setpoint accepted from a valve.
+        // purgeAfter: hours after which a silent valve is removed from the persisted stack.
+        this.itemMaxAge=(n.itemMaxAge!==undefined && n.itemMaxAge!=="" && !isNaN(n.itemMaxAge)) ? parseInt(n.itemMaxAge) : 30;
+        this.maxSp=(n.maxSp!==undefined && n.maxSp!=="" && !isNaN(n.maxSp)) ? parseFloat(n.maxSp) : 25;
+        this.purgeAfter=24;
+        // unsatisfiedTimeout: minutes a room may lead the boiler without warming up by minRise °C before it is
+        //                     put on hold for unsatisfiedHold minutes (0 = off). Catches a room the boiler cannot
+        //                     satisfy (stuck valve, open window, wrong sensor) that would otherwise heat all night.
+        this.unsatisfiedTimeout=(n.unsatisfiedTimeout!==undefined && n.unsatisfiedTimeout!=="" && !isNaN(n.unsatisfiedTimeout)) ? parseInt(n.unsatisfiedTimeout) : 180;
+        this.unsatisfiedHold=(n.unsatisfiedHold!==undefined && n.unsatisfiedHold!=="" && !isNaN(n.unsatisfiedHold)) ? parseInt(n.unsatisfiedHold) : 120;
+        this.minRise=(n.minRise!==undefined && n.minRise!=="" && !isNaN(n.minRise)) ? parseFloat(n.minRise) : 0.3;
+        this.lastHaPayload=undefined;
+        this.lastHaPublishTs=0;
         
         this.liveStack=[];                                              // Stack of valve information 
         this.mqttstack=[];                                              // Stack of MQTT msg to be sent 
@@ -200,7 +217,7 @@ module.exports = function (RED) {
             // Send MQTT msg back on the node.livestack
 
             if (node.mqttclient==null || node.mqttclient.connected!=true){
-                node.warn("MQTT not connected...");
+                if (!node.mqttErrorLogged) nlog("MQTT not connected, messages queued","debug");
                 return;
             }
 
@@ -209,8 +226,10 @@ module.exports = function (RED) {
             while (msg!==undefined){
                 nlog('MQTT-> msg dequeueing');
                
-                if (msg.topic===undefined || msg.payload===undefined)
-                    return;
+                if (msg.topic===undefined || msg.payload===undefined){
+                    msg=node.mqttstack.shift();      // skip invalid entry, keep flushing the rest
+                    continue;
+                }
                 
                 try {
                     let msgstr;
@@ -241,6 +260,10 @@ module.exports = function (RED) {
             
             node.lastInputTs=now;
             let sp=parseFloat(parseFloat(msg.setpoint).toFixed(2));
+            if (sp>node.maxSp){
+                nlog(`Setpoint ${sp}°C from ${msg.requestedBy} above maxSp ${node.maxSp}°C, clamped`,"warn");
+                sp=node.maxSp;
+            }
             //let adjustedTemp=Math.round(parseFloat(msg.temperature)); // <--- test ongoing
 
             let adjustedTemp=parseFloat(parseFloat(msg.temperature).toFixed(2));
@@ -248,6 +271,8 @@ module.exports = function (RED) {
             node.liveStack.forEach(function(item){
                 if (item.id==msg.requestedBy){                   // item is found in the stack
                     bFound=true;
+                    item.health=msg.health;
+                    item.reasons=msg.reasons;
                     item.sp=sp;
                     item.groupId=msg.groupId;
                     item.temp=adjustedTemp;
@@ -262,6 +287,8 @@ module.exports = function (RED) {
                 newItem.sp=sp;
                 newItem.temp=adjustedTemp;
                 newItem.groupId=msg.groupId;
+                newItem.health=msg.health;
+                newItem.reasons=msg.reasons;
                 newItem.lastupdate= now.toISOString();
                 node.liveStack.push(newItem);
             }
@@ -270,6 +297,125 @@ module.exports = function (RED) {
             saveState();                                // Save state after processing input
             return;
         }
+        function keyed(key,value){
+            if (key && key.trim()!=""){
+                let o={}; o[key]=value; return o;
+            }
+            return value;
+        }
+
+        function stackCentralHeating(on){
+            if (node.boilerSwCentralHeatingSetTopic===undefined || node.boilerSwCentralHeatingSetTopic==""){
+                return;
+            }
+            node.mqttstack.push({topic:node.boilerSwCentralHeatingSetTopic,payload:keyed(node.boilerSwCentralHeatingKey,on?1:0),qos:0,retain:false});
+        }
+
+        function isFresh(item,now){
+            if (node.itemMaxAge<=0 || item.lastupdate===undefined) return true;
+            return Math.abs(moment(item.lastupdate).diff(now,"m"))<node.itemMaxAge;
+        }
+
+        function securityMode(reason, haStatus){
+            if (node.outputUpdates==true){
+                let msg={};
+                msg.payload={temperature:node.defaultTemp,setpoint:node.defaultSp,name:"Security mode"};
+                node.send([msg,null]);
+            }
+
+            if (node.mqttUpdates==true){
+                stackCentralHeating(false);
+                if (node.boilerSpSetTopic) node.mqttstack.push({topic:node.boilerSpSetTopic,payload:keyed(node.boilerSpKey,parseFloat(parseFloat(node.defaultSp).toFixed(2))),qos:0,retain:false});
+                if (node.boilerCurrentTemperatureSetTopic) node.mqttstack.push({topic:node.boilerCurrentTemperatureSetTopic,payload:keyed(node.boilerCurrentTemperatureKey,parseFloat(parseFloat(node.defaultTemp).toFixed(2))),qos:0,retain:false});
+                if (node.boilerLeadingDeviceSetTopic) node.mqttstack.push({topic:node.boilerLeadingDeviceSetTopic,payload:keyed(node.boilerLeadingDeviceKey,"Security mode"),qos:0,retain:false});
+                if (node.boilerLeadingDeviceIdSetTopic) node.mqttstack.push({topic:node.boilerLeadingDeviceIdSetTopic,payload:keyed(node.boilerLeadingDeviceKey,0),qos:0,retain:false});
+                sendMqtt();
+            }
+
+            node.activeItem=undefined;
+            node.activeItemGap=-99;
+
+            node.status({
+                fill:  'yellow',
+                shape: 'ring',
+                text:(reason+", t:"+node.defaultTemp+"°C, sp:"+node.defaultSp+"°C")
+            });
+            publishHaState(moment(), node.liveStack.filter(function(it){ return isFresh(it,moment()); }), haStatus||'security');
+        }
+
+        function selectLeader(list){
+            // The room with the largest gap (sp - temp) leads; ties go to the higher setpoint.
+            let best={item:undefined,gap:-99};
+            list.forEach(function(item){
+                let g=parseFloat(item.sp)-parseFloat(item.temp);
+                if (isNaN(g)) return;
+                if (g>best.gap || (g==best.gap && best.item!==undefined && parseFloat(best.item.sp)<parseFloat(item.sp))){
+                    best={item:item,gap:g};
+                }
+            });
+            return best;
+        }
+
+        // ---- Home Assistant discovery -------------------------------------------------------
+        const ha = {
+            enabled: !!(node.mqttSettings && (node.mqttSettings.haDiscovery===true || node.mqttSettings.haDiscovery==='true')),
+            prefix: (node.mqttSettings && node.mqttSettings.mqttRootPath) ? node.mqttSettings.mqttRootPath : 'homeassistant',
+            base: (node.mqttSettings && node.mqttSettings.haBaseTopic) ? node.mqttSettings.haBaseTopic : 'smartheating'
+        };
+        const haSlug = String(node.name||'boiler').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'') || 'boiler';
+        const haUid = 'smartboiler_'+String(node.id).replace(/[^a-zA-Z0-9]/g,'');
+        const haStateTopic = `${ha.base}/boiler/${haSlug}/state`;
+        const haAvailTopic = `${ha.base}/boiler/${haSlug}/availability`;
+        node.haAvailTopic=haAvailTopic;
+        node.haEnabled=ha.enabled;
+
+        function publishHaDiscovery(){
+            if (!ha.enabled) return;
+            const device={identifiers:[haUid],name:`SmartBoiler ${node.name}`,manufacturer:'vib',model:'smart-boiler',sw_version:pjson.version};
+            const common={state_topic:haStateTopic,availability_topic:haAvailTopic,json_attributes_topic:haStateTopic,device:device};
+            [
+                ['sensor','status',{name:'Status',unique_id:haUid+'_status',value_template:'{{ value_json.status }}',icon:'mdi:water-boiler'}],
+                ['binary_sensor','demand',{name:'Heat demand',unique_id:haUid+'_demand',device_class:'heat',value_template:"{{ 'ON' if value_json.demand else 'OFF' }}"}],
+                ['sensor','leading',{name:'Leading room',unique_id:haUid+'_leading',value_template:'{{ value_json.leading }}',icon:'mdi:radiator'}],
+                ['sensor','requesting',{name:'Rooms requesting heat',unique_id:haUid+'_requesting',value_template:'{{ value_json.requesting | count }}',icon:'mdi:home-thermometer'}],
+                ['sensor','ignored',{name:'Rooms ignored',unique_id:haUid+'_ignored',value_template:'{{ value_json.ignored | count }}',icon:'mdi:alert'}],
+                ['binary_sensor','problem',{name:'Problem',unique_id:haUid+'_problem',device_class:'problem',value_template:"{{ 'ON' if (value_json.ignored | count) > 0 or value_json.status == 'security' else 'OFF' }}"}]
+            ].forEach(function(e){
+                node.mqttstack.push({topic:`${ha.prefix}/${e[0]}/${haUid}/${e[1]}/config`,payload:Object.assign(e[2],common),qos:1,retain:true});
+            });
+            node.mqttstack.push({topic:haAvailTopic,payload:'online',qos:1,retain:true});
+        }
+
+        function publishHaState(now,freshStack,status){
+            if (!ha.enabled) return;
+            freshStack=freshStack||[];
+            let rooms=node.liveStack.map(function(it){
+                let fresh=freshStack.includes(it);
+                let held=it.heldUntil && moment(it.heldUntil).isAfter(now);
+                let state= !fresh ? 'silent' : (held ? 'on_hold' : (it.health==='FAILED' ? 'failed' : 'ok'));
+                return {name:it.name,setpoint:parseFloat(it.sp),temperature:parseFloat(it.temp),gap:parseFloat((parseFloat(it.sp)-parseFloat(it.temp)).toFixed(2)),state:state,health:it.health||null,reasons:it.reasons||[],held_until:held?it.heldUntil:null,last_update:it.lastupdate};
+            });
+            let demand = status ? false : (node.activeItem!==undefined && node.activeItemGap>0);
+            let st={
+                status: status ? status : (demand ? 'heat' : 'idle'),
+                demand: demand,
+                leading: (!status && node.activeItem) ? node.activeItem.name : null,
+                setpoint: (!status && node.activeItem) ? parseFloat(node.activeItem.sp) : parseFloat(node.defaultSp),
+                temperature: (!status && node.activeItem) ? parseFloat(node.activeItem.temp) : parseFloat(node.defaultTemp),
+                requesting: rooms.filter(function(r){ return r.state==='ok' && r.gap>0; }).map(function(r){ return r.name; }),
+                ignored: rooms.filter(function(r){ return r.state!=='ok'; }).map(function(r){ return r.name+' ('+r.state+')'; }),
+                rooms: rooms
+            };
+            let cmp=JSON.stringify(Object.assign({},st,{rooms:rooms.map(function(r){ return [r.name,r.state,r.setpoint,r.temperature]; })}));
+            let nowMs=moment(now).valueOf();
+            if (cmp!==node.lastHaPayload || nowMs-node.lastHaPublishTs>=5*60000){
+                node.mqttstack.push({topic:haStateTopic,payload:st,qos:0,retain:true});
+                node.lastHaPayload=cmp;
+                node.lastHaPublishTs=nowMs;
+                sendMqtt();
+            }
+        }
+
         function stackMqttMsg(){
 
             //nlog("stackMqttMsg for activeItem:"+JSON.stringify(node.activeItem));
@@ -353,45 +499,36 @@ module.exports = function (RED) {
             // Max Duration since last input exceeded, sending security msg if enabled
             // with default sp and temp to avoid the boiler to heat endlessly
             if (node.boilerSecurity==true && Math.abs(diff)>=node.maxDurationSinceLastInput){
-
-                
-                if (node.outputUpdates==true){
-                    let msg={};
-                    msg.payload={temperature:node.defaultTemp,setpoint:node.defaultSp,name:"Security mode"};
-                    node.send([msg,null]);
-                }
-
-                if (node.mqttUpdates==true){
-                    let mqttmsg={topic:node.boilerSpSetTopic,payload:parseFloat(parseFloat(node.defaultSp).toFixed(2)),qos:0,retain:false};
-                    node.mqttstack.push(mqttmsg);
-
-                    let payload = {};
-                    payload[node.boilerCurrentTemperatureKey] = parseFloat(parseFloat(node.defaultTemp).toFixed(2));
-                    mqttmsg={topic:node.boilerCurrentTemperatureSetTopic,payload:payload,qos:0,retain:false};
-                    node.mqttstack.push(mqttmsg);
-                    
-                    payload = {};
-                    payload[node.boilerLeadingDeviceKey] = "Security mode";
-                    mqttmsg={topic:node.boilerLeadingDeviceSetTopic,payload:payload,qos:0,retain:false};
-                    node.mqttstack.push(mqttmsg);
-
-                    payload = {};
-                    payload[node.boilerLeadingDeviceKey] = 0;
-                    mqttmsg={topic:node.boilerLeadingDeviceIdSetTopic,payload:payload,qos:0,retain:false};
-                    node.mqttstack.push(mqttmsg);
-                     
-                    sendMqtt();
-                }
-
-                node.status({
-                    fill:  'yellow',
-                    shape: 'dot',
-                    text:("No update, t:"+node.defaultTemp+"°C, sp:"+node.defaultSp+"°C")
-                });    
-
+                securityMode("No update");
                 return;
             }
-            
+
+            // Drop valves silent for more than purgeAfter hours (disabled / deleted nodes, dead devices).
+            let before=node.liveStack.length;
+            node.liveStack=node.liveStack.filter(function(item){
+                return item.lastupdate===undefined || Math.abs(moment(item.lastupdate).diff(now,"h"))<node.purgeAfter;
+            });
+            if (node.liveStack.length!=before){
+                nlog(`Purged ${before-node.liveStack.length} silent valve(s) from the stack`,"warn");
+                saveState();
+            }
+
+            // Only valves that reported recently take part in the decision.
+            let freshStack=node.liveStack.filter(function(item){ return isFresh(item,now); });
+            let staleNames=node.liveStack.filter(function(item){ return !isFresh(item,now); }).map(function(i){return i.name;});
+            if (staleNames.length>0){
+                nlog("Ignoring silent valve(s): "+staleNames.join(", "),"debug");
+            }
+
+            if (freshStack.length==0){
+                if (node.liveStack.length>0 && node.boilerSecurity==true){
+                    securityMode("All valves silent");
+                } else {
+                    publishHaState(now,freshStack,'no_data');
+                }
+                return;
+            }
+
             nlog(JSON.stringify(node.liveStack),"debug");
 
             bFoundActiveValve=false;
@@ -400,39 +537,55 @@ module.exports = function (RED) {
             if (node.activeItem) {
                 node.previousActiveItemSp=node.activeItem.sp;
             }
-            node.activeItemGap=-99;
-            
             node.previousItem=node.activeItem;
-           
-            
-            node.liveStack.forEach(function(item){
-                // For each item in the stack,
-                // if the set point > current temp then the Valve is active
-                // select the valve where the Gap is the higher
-                // if there is no active valve, select the valve (passive) with the highest sp
 
-                // node.activeItem equal to the active valve to be sent to the boiler
-                // node.passiveItem equal to the passive valve in case there is no activeItem
-
-                let itemGap=parseFloat(item.sp)-parseFloat(item.temp);
-                //nlog("id:"+item.id+" itemGap:"+itemGap);
-                if (itemGap>node.activeItemGap){
-                    node.activeItemGap=itemGap;
-                    node.activeItem=item;
-                     
-                }else if (itemGap==node.activeItemGap && node.activeItem!==undefined && node.activeItem.sp<item.sp){
-                    node.activeItemGap=itemGap;
-                    node.activeItem=item;
-                    //nlog("become activeItem:"+item.id);
+            // Rooms on hold (could not be satisfied) are left out until their hold ends.
+            let eligible=freshStack.filter(function(item){
+                if (item.heldUntil && moment(item.heldUntil).isAfter(now)) return false;
+                if (item.heldUntil){
+                    nlog(`${item.name}: hold ended, back in the decision`,"info");
+                    delete item.heldUntil;
+                    delete item.leadSince;
                 }
-                nlog("previous Gap:"+node.previousActiveItemGap+", Gap:"+itemGap+", active Item:"+item.id,"debug");
+                return true;
             });
 
+            let pick=selectLeader(eligible);
+
+            // Unsatisfiable demand: the same room leads for unsatisfiedTimeout minutes without warming up.
+            if (node.unsatisfiedTimeout>0 && pick.item!==undefined && pick.gap>0){
+                let it=pick.item;
+                if (!it.leadSince || it.leadStartTemp===undefined){
+                    it.leadSince=now.toISOString();
+                    it.leadStartTemp=parseFloat(it.temp);
+                } else if (parseFloat(it.temp)-it.leadStartTemp>=node.minRise){
+                    it.leadSince=now.toISOString();            // warming up: restart the window
+                    it.leadStartTemp=parseFloat(it.temp);
+                } else if (Math.abs(moment(it.leadSince).diff(now,"m"))>=node.unsatisfiedTimeout){
+                    it.heldUntil=moment(now).add(node.unsatisfiedHold,"m").toISOString();
+                    nlog(`${it.name}: requested heat for ${node.unsatisfiedTimeout} min without warming up (${it.leadStartTemp}°C -> ${it.temp}°C), on hold for ${node.unsatisfiedHold} min`,"warn");
+                    delete it.leadSince;
+                    eligible=eligible.filter(function(x){ return x!==it; });
+                    pick=selectLeader(eligible);
+                    saveState();
+                }
+            }
+            // Only the current leader keeps its lead timer.
+            freshStack.forEach(function(item){
+                if (pick.item===undefined || item!==pick.item || pick.gap<=0) delete item.leadSince;
+            });
+
+            if (pick.item===undefined){
+                securityMode("All requesting rooms on hold","idle");
+                return;
+            }
+            node.activeItem=pick.item;
+            node.activeItemGap=pick.gap;
             
             if(node.previousItem===undefined && node.activeItem!==undefined){
                 bUpdate=true;
             }
-            else if (node.previousItem!==undefined && node.previousItem.id!=node.activeItem.id){
+            else if (node.previousItem!==undefined && node.activeItem!==undefined && node.previousItem.id!=node.activeItem.id){
                 bUpdate=true;
             }
             else if (node.previousItem!==undefined && node.previousActiveItemGap!=node.activeItemGap){
@@ -444,34 +597,11 @@ module.exports = function (RED) {
 
             if (node.activeItem!==undefined && (bUpdate==true || node.triggerMode=="triggerMode.everyCycle" || node.manualTrigger==true)){
 
-                if (node.activeItemGap>0){
-                    bFoundActiveValve=true;
-                    if (node.boilerSwCentralHeatingSetTopic===undefined || node.boilerSwCentralHeatingSetTopic==""){
-                        nlog("boilerSwCentralHeatingSetTopic undefined, cannot send ON command","error");
-                        
-                    }else{
-                        let payload = 1;
-                        if (node.boilerSwCentralHeatingKey) {
-                            let obj = {};
-                            obj[node.boilerSwCentralHeatingKey] = 1;
-                            payload = obj;
-                        }
-                        let mqttmsg={topic:node.boilerSwCentralHeatingSetTopic,payload:payload,qos:0,retain:false};
-                        node.mqttstack.push(mqttmsg);
-                    }
-                } else {
-                    if (node.boilerSwCentralHeatingSetTopic===undefined || node.boilerSwCentralHeatingSetTopic==""){
-                        // ignore
-                    }else{
-                        let payload = 0;
-                        if (node.boilerSwCentralHeatingKey) {
-                            let obj = {};
-                            obj[node.boilerSwCentralHeatingKey] = 0;
-                            payload = obj;
-                        }
-                        let mqttmsg={topic:node.boilerSwCentralHeatingSetTopic,payload:payload,qos:0,retain:false};
-                        node.mqttstack.push(mqttmsg);
-                    }
+                bFoundActiveValve = node.activeItemGap>0;
+                if (node.boilerSwCentralHeatingSetTopic===undefined || node.boilerSwCentralHeatingSetTopic==""){
+                    if (bFoundActiveValve) nlog("boilerSwCentralHeatingSetTopic undefined, cannot send ON command","error");
+                }else{
+                    stackCentralHeating(bFoundActiveValve);
                 }
                 
                 let msg={};
@@ -502,6 +632,7 @@ module.exports = function (RED) {
                 saveState();  // Save state after successful evaluation update
                 node.manualTrigger=false;
             }
+            publishHaState(now,freshStack);
         }
         
         // INPUT MESSAGE MGNT
@@ -573,43 +704,41 @@ module.exports = function (RED) {
                 connectTimeout: 4000,
                 username: node.mqttSettings.mqttUser,
                 password: node.mqttSettings.mqttPassword,
-                reconnectPeriod: 1000,
+                reconnectPeriod: 5000,
+                will: ha.enabled ? {topic:haAvailTopic,payload:'offline',qos:1,retain:true} : undefined,
             });
 
             node.mqttclient.on('error', function (error) {
-                node.warn("MQTT error: "+error);
+                if (!node.mqttErrorLogged){                  // once per outage, not every retry
+                    node.warn("MQTT error: "+error+" (will keep retrying, logged once)");
+                    node.mqttErrorLogged=true;
+                }
             });
         
             node.mqttclient.on('connect', () => {
-
-                let msg=node.mqttstack.shift();
-            
-                while (msg!==undefined){
-                    nlog('MQTT Connected -> start dequeuing'); 
-                    if (msg.topic===undefined || msg.payload===undefined)
-                        return;
-                    node.mqttclient.publish(msg.topic,JSON.stringify(msg.payload),{ qos: msg.qos, retain: msg.retain },(error) => {
-                        if (error) {
-                            node.error(error)
-                        }
-                    });
-                    
-                    msg=node.mqttstack.shift();
-                }
+                if (node.mqttErrorLogged) node.log('MQTT connected again');
+                node.mqttErrorLogged=false;
+                nlog('MQTT connected', "debug");
+                publishHaDiscovery();
+                sendMqtt();
             });
         }
 
         node.evalInterval = setInterval(evaluate, node.cycleDuration*1000);
         
         if (node.triggerMode != 'triggerMode.statechange') {
-            setTimeout(evaluate, 1000)
+            node.startTimeout = setTimeout(evaluate, 1000)
         }
 
          node.on('close', function(done) {
             nlog("closing connexion");
             node.log('MQTT disconnecting');
             clearInterval(node.evalInterval);
+            clearTimeout(node.startTimeout);
             if (node.mqttclient) {
+                if (ha.enabled && node.mqttclient.connected){
+                    node.mqttclient.publish(haAvailTopic,'offline',{qos:1,retain:true});
+                }
                 node.mqttclient.end();
             }
             done();

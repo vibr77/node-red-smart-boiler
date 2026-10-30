@@ -59,6 +59,11 @@
                 }
                 return true;
             }},
+            itemMaxAge:{value:"30",validate:function(v){ return v==="" || v===undefined || v===null || (!isNaN(v) && v>=0 && v<=1440); }},
+            unsatisfiedTimeout:{value:"180",validate:function(v){ return v==="" || v===undefined || (!isNaN(v) && v>=0 && v<=1440); }},
+            unsatisfiedHold:{value:"120",validate:function(v){ return v==="" || v===undefined || (!isNaN(v) && v>=0 && v<=1440); }},
+            minRise:{value:"0.3",validate:function(v){ return v==="" || v===undefined || (!isNaN(v) && v>=0 && v<=5); }},
+            maxSp:{value:"25",validate:function(v){ return v==="" || v===undefined || v===null || (!isNaN(v) && v>=5 && v<=35); }},
             maxDurationSinceLastInput:{value:"5",required: true, validate:function(v) {
                 if (isNaN(v)){
                     return false;
@@ -104,6 +109,12 @@
         },
         oneditprepare: function() {
             var node = this; 
+            // 0.82: nodes created with an older version have no value for the new options. Show the
+            // default that the runtime applies instead of an empty field.
+            ['itemMaxAge','maxSp','unsatisfiedTimeout','unsatisfiedHold','minRise'].join(',').split(',').forEach(function(k){
+                var d = node._def.defaults[k];
+                if (d && (node[k]===undefined || node[k]==="" || node[k]===null)) { $('#node-input-'+k).val(d.value); }
+            });
             $("#node-input-boilerEntityID").on('change', function() {
                 console.log("boilerEntityID changed, updating topics");
                 node.boilerEntityID = $("#node-input-boilerEntityID").val();
@@ -266,6 +277,28 @@
         <label for="node-input-maxDurationSinceLastInput"><i class="fa fa-tasks">&nbsp;</i> Max duration</label>
         <input type="text" id="node-input-maxDurationSinceLastInput" style="width:60px !important; text-align: right;" placeholder="duration">
         <span> min since last input</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-itemMaxAge"><i class="fa fa-shield">&nbsp;</i> Valve timeout</label>
+        <input type="text" id="node-input-itemMaxAge" style="width:60px !important; text-align: right;" title="Ignore a valve that has not reported for this long (needs smart-valve heartbeat)">
+        <span> min (0 = off)</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-maxSp"><i class="fa fa-shield">&nbsp;</i> Max SP</label>
+        <input type="text" id="node-input-maxSp" style="width:60px !important; text-align: right;" title="Highest setpoint accepted from any valve">
+        <span> °C</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-unsatisfiedTimeout"><i class="fa fa-shield">&nbsp;</i> Unsatisfied</label>
+        <input type="text" id="node-input-unsatisfiedTimeout" style="width:60px !important; text-align: right;" title="A room leading this long without warming up by Min rise is put on hold (0 = off)">
+        <span> min without rising by </span>
+        <input type="text" id="node-input-minRise" style="width:50px !important; text-align: right;">
+        <span> °C</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-unsatisfiedHold"><i class="fa fa-shield">&nbsp;</i> Hold for</label>
+        <input type="text" id="node-input-unsatisfiedHold" style="width:60px !important; text-align: right;">
+        <span> min</span>
     </div>
     <div class="form-row">
         <label for="node-input-boilerSecurity"><i class="fa fa-tasks">&nbsp;</i>Security</label>
@@ -505,6 +538,14 @@
             <li>Configurable default values ensure safe operation during failures</li>
             <li>Timeout triggers automatic fallback to safe temperature settings</li>
             <li><strong>State Persistence:</strong> The node automatically saves the complete valve stack and boiler state to <code>~/.node-red/.node-red-state/boiler-{node-id}.json</code>. This includes all connected valves, their temperatures, setpoints, and the active valve selection. State is restored on Node-RED restarts and flow redeployments, ensuring seamless operation continuity.</li>
+        </ul>
+        <h3>Safety (0.82)</h3>
+        <ul>
+            <li><b>Valve timeout</b>: a valve that has not reported for this many minutes is ignored (needs smart-valve 0.82, which re-sends at least every 10 min). After 24 h without news it is removed from the saved stack, so disabled or deleted valves no longer linger.</li>
+            <li><b>Max SP</b>: any setpoint above this is capped.</li>
+            <li><b>Unsatisfied</b>: when the same room leads for this many minutes without warming up by Min rise, it is put on hold for Hold for minutes and the next room takes over. This stops a room the boiler cannot heat (stuck valve, open window) from running it all night.</li>
+            <li><b>Security</b>: when no valve reports for Max duration, or every valve is silent, the boiler receives the default setpoint and temperature <i>and central heating is switched off</i>.</li>
+            <li>Valves 0.82 also send their health; a valve whose room is FAILED sends its off setpoint and so never leads.</li>
         </ul>
     </div>
 </script>

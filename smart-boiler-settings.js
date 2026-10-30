@@ -10,6 +10,8 @@ module.exports = function (RED) {
     this.mqttUser = n.mqttUser
     this.mqttPassword = this.credentials.mqttPassword;
     this.mqttRootPath = n.mqttRootPath
+    this.haDiscovery = n.haDiscovery === true || n.haDiscovery === 'true'
+    this.haBaseTopic = n.haBaseTopic || 'smartheating'
   }
   RED.nodes.registerType('smart-boiler-settings', SmartBoilerSettings, {
     credentials: {

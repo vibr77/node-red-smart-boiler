@@ -1,145 +1,146 @@
-# Smart-Boiler
+# Smart-Boiler Node
 
-## Overview
-**Smart-Boiler** is a core component of the intelligent heating control suite, designed to work in tandem with **Smart-Scheduler** and **Smart-Valve**.
+The `smart-boiler` node decides whether the house needs heat and tells the boiler controller (for example an ESPHome OpenTherm gateway) which setpoint and room temperature to regulate on, over MQTT. It receives one message per room from the `smart-valve` nodes, follows the room with the largest gap, ignores rooms that went silent or cannot be satisfied, and can publish its state to Home Assistant.
 
-*   **Smart-Scheduler**: Manages heating schedules and target temperatures.
-*   **Smart-Valve**: Groups and controls individual radiator valves (TRVs) by room/zone.
-*   **Smart-Boiler**: Acts as the central controller. It aggregates demand from all connected Smart-Valve nodes and determines the optimal boiler operation (On/Off, Setpoint) based on the highest heating requirement.
+`smart-boiler` decides whether the house needs heat and tells the boiler controller which setpoint and
+room temperature to regulate on. It receives one message per room from the `smart-valve` nodes.
 
-This node is designed to integrate with Home Assistant via MQTT and can optionally control an OpenTherm gateway.
-
-## Features
-*   **Demand Aggregation**: Collects temperature and setpoint data from multiple valves.
-*   **Intelligent Firing**: Calculates the "Active Valve" based on the largest gap between setpoint and current temperature.
-*   **Safety Watchdog**: Automatically reverts to safe defaults if no updates are received from valves within a configurable timeframe.
-*   **MQTT Integration**: Publishes boiler status, setpoint, and the name of the "Leading Device" (the valve driving the boiler) to MQTT.
-*   **Message Storm Protection**: Prevents processing overload by limiting the rate of incoming messages.
-*   **State Persistence**: Automatically saves and restores the complete valve stack and boiler state across Node-RED restarts and flow deploys.
-
-## Input Message Format
-
-The node expects a `msg.payload` object containing a command and valve data. This is typically generated automatically by **Smart-Valve** nodes.
-
-### Update Command (`set`)
-Used to update the status of a valve in the boiler's internal stack.
-
-```javascript
-msg.payload = {
-    command: "set",         // Required
-    setpoint: 21.5,         // Target temperature in °C (number)
-    temperature: 19.0,      // Current temperature in °C (number)
-    requestedBy: "Kitchen", // Unique name/ID of the valve (string)
-    groupId: 1              // Group ID the valve belongs to (number)
-}
+```
+smart-valve (room 1) ─┐
+smart-valve (room 2) ─┼──set──▶ smart-boiler ──MQTT──▶ boiler controller (e.g. ESPHome OpenTherm)
+smart-valve (room n) ─┘                          setpoint, room temperature, leading room, central heating on/off
 ```
 
-### Other Commands
-*   `command: "trigger"`: Forces the boiler to re-evaluate its state and publish updates immediately.
-*   `command: "stack"`: Outputs the current internal stack of known valves to the debug output.
+## How the decision is made
 
-## Logic & Operation
+1. Every room sends its setpoint and temperature (`smart-valve` re-sends at least every 10 min).
+2. Rooms that have not reported for **Valve timeout** minutes are ignored; rooms on **hold** are ignored.
+3. Among the remaining rooms, the one with the **largest gap** (setpoint − temperature) leads. On a tie, the
+   higher setpoint wins.
+4. If that gap is positive, **central heating is switched on** and the boiler receives the leading room's
+   setpoint and temperature. Otherwise central heating is switched off.
+5. If the same room leads for **Unsatisfied** minutes without warming up by **Min rise**, it is put on hold
+   for **Hold for** minutes and the next room takes over. A room the boiler cannot heat (stuck valve, open
+   window, wrong sensor) can no longer keep the boiler running all night.
+6. If nothing reports at all for **Max duration**, or every room is silent, the boiler goes to **Security**:
+   default setpoint and temperature, central heating off.
 
-### 1. Valve Stack Management
-Every time a `set` command is received, the node updates its internal "Live Stack". If the valve (`requestedBy`) is new, it is added; otherwise, its values are updated.
+A room whose `smart-valve` is FAILED sends its Off setpoint (5 °C), so it never leads.
 
-### 2. Active Valve Selection
-On every cycle (or update), the node evaluates all valves in the stack to determine if the boiler should run.
+## Node status
 
-*   **Active Condition**: A valve is considered "Active" if `setpoint > temperature`.
-*   **Priority Rule**: The boiler follows the valve with the **highest gap** (`setpoint - temperature`).
-    *   *Example*:
-        *   Valve A: SP 20°C, Temp 21°C (Inactive)
-        *   Valve B: SP 22°C, Temp 21°C (Gap +1)
-        *   Valve C: SP 24°C, Temp 20°C (Gap +4) -> **Winner**
-    *   **Tie-Breaker**: If gaps are equal, the valve with the higher setpoint wins.
+| Status | Meaning |
+|---|---|
+| 🔴 dot `Active:SV_PARENT, t:20.18°C, sp:21.00°C` | Heating for SV_PARENT |
+| 🟢 dot `Active:SV_LOU, t:20.60°C, sp:20.00°C` | No room needs heat; the room closest to needing it is shown |
+| 🟡 ring `No update, …` / `All valves silent, …` | Security mode |
+| 🟡 ring `All requesting rooms on hold, …` | The only rooms asking for heat are on hold |
+| 🟡 dot `Waiting for data...` | Nothing received yet |
 
-### 3. Boiler Control
-*   **Heating On**: If an Active Valve is found, the boiler is switched ON (via MQTT topic). The boiler setpoint is set to the Active Valve's setpoint.
-*   **Heating Off**: If no valves are active (all rooms are warm enough), the boiler is switched OFF.
+## Editor parameters
 
-### 4. Safety Watchdog
-If no valid input is received for a duration exceeding **Max duration since last input** (configurable):
-*   The boiler enters **Security Mode**.
-*   It publishes the **Default Temp** and **Default Setpoint** to the boiler.
-*   This prevents the boiler from getting stuck in a "Heating" state if the control network fails.
+### General
 
-## Business Rules
+| Field | What it does | Example |
+|---|---|---|
+| **Name** | Name of the node, also the Home Assistant device name. | `RSL_BOILER` |
+| **Entity ID** | Identifier of the boiler controller. When you type it, empty topic fields are filled in with `<root path>/<entity id>/…`. | `OT_BOILER_64` |
+| **MQTT** | MQTT connection (`smart-boiler-settings` node). | `jarvis` |
+| **Mqtt updates** | Send the commands to the boiler controller over MQTT (the normal mode). | on |
+| **Output updates** | Also send the leading room on the node output (for a debug node or another flow). | on |
 
-### Valve Activation Condition
-A valve is considered **ACTIVE** when:
-```
-sp > temp
-```
-The boiler is controlled by the valve with the **HIGHEST** temperature gap:
-```
-gap = sp - temp
-```
+### Boiler topics
 
-### Target Conditions on Input
-*   **Valid input requires**: `msg.payload.command === "set"` AND `msg.topic` matches the configured MQTT topic pattern
-*   **Message processing**: Each input creates or updates a valve entry in the internal stack (liveStack)
-*   **Stack management**: Valve entries are indexed by `requestedBy` (valve name/ID), ensuring unique valve identification
-*   **Cycle trigger**: Every valid input triggers an evaluation cycle to determine the active valve
-*   **Timestamp tracking**: Each valve entry records `lastupdate` for timeout monitoring
-*   **Security timeout**: If no updates received within configured duration, system enters safe mode with default values
-*   **Command filtering**: Only "set" commands are processed for valve updates; "trigger" forces immediate re-evaluation; "stack" outputs debug information
+Each topic has a **Key**: when filled, the value is sent as `{"<key>": value}`; when empty, as a plain number.
 
-## Configuration
+| Field | What it sends | Example |
+|---|---|---|
+| **Current temperature → Set / Key** | Temperature of the leading room (what the boiler regulates on). | `homeassistant/OT_BOILER_64/currentTemperature/state`, key `value` |
+| **Set point → Set / Key** | Setpoint of the leading room. | `homeassistant/OT_BOILER_64/setpointTemperature/set` |
+| **Leading device → Set name / Set Id / Key** | Name and group id of the leading room, for display in Home Assistant. | `…/leadingDevice/state`, `…/leadingDeviceId/state`, key `value` |
+| **Central heating → Set / Key** | `1` when a room needs heat, `0` otherwise. | `homeassistant/OT_BOILER_64/swCentralHeating/set` |
 
-| Parameter | Description |
-| :--- | :--- |
-| **Name** | Node name (also used as the Home Assistant device name). |
-| **Boiler Entity** | The ID of the boiler device in Home Assistant (used to auto-generate MQTT topics). |
-| **MQTT Settings** | Reference to the MQTT Broker configuration node. |
-| **MQTT Updates** | If checked, the node will publish updates to the configured MQTT topics. |
-| **Output Updates** | If checked, the node will send a message to its output port on change. |
-| **Update Cycle** | How often (in seconds) the node re-evaluates the valve stack. |
-| **Trigger Mode** | When to trigger outputs: `State Change`, `State Change + Startup`, or `Every Cycle`. |
-| **Max Duration** | Time (in minutes) without input before triggering Security Mode. |
-| **Default Temp/SP** | Fallback values used in Security Mode. |
-| **Boiler Security** | Enable/Disable the watchdog security feature. |
+### Timing
 
-## Outputs
+| Field | What it does | Default / your setup |
+|---|---|---|
+| **Cycle** (seconds) | How often the decision is re-evaluated on its own. | `60` s |
+| **Trigger mode** | When commands are sent: *when state changes*, *when state changes + startup*, or *every cycle* (re-sent every cycle, recommended so the controller always has fresh values). | every cycle |
+| **Max duration** | If no room at all has reported for this long, go to Security mode. | `15` min |
 
-### MQTT Topics
-The node publishes to the following topics (prefixed by the configured root path, e.g., `homeassistant/boiler_entity_id/...`):
-*   `.../setpointTemperature/set`: Target boiler water temperature (or room setpoint, depending on boiler mode).
-*   `.../currentTemperature/state`: Current reference temperature (from the leading valve).
-*   `.../leadingDevice/state`: Name of the valve currently controlling the boiler.
-*   `.../swCentralHeating/set`: `1` (On) or `0` (Off).
+### Safety (new in 0.82)
 
-### Node Output
-If **Output Updates** is enabled, the node sends:
-```javascript
-msg.payload = {
-    sp: 24,
-    temp: 20,
-    name: "Living Room", // Name of the active valve
-    id: "Living Room",
-    lastupdate: "2023-10-27T10:00:00.000Z",
-    groupId: 1
-}
+| Field | What it does | Default | Notes |
+|---|---|---|---|
+| **Valve timeout** | A room that has not reported for this long is ignored. After 24 h without news it is removed from the saved list, so disabled or deleted valves stop lingering (in 0.81 they stayed forever, across restarts). `0` = never ignore. | `30` min | Requires smart-valve 0.82 (heartbeat every 10 min). With 0.81 valves, set it to `0`. |
+| **Max SP** | Any setpoint above this is capped. | `25` °C | |
+| **Unsatisfied … min without rising by … °C** | A room leading this long without its temperature rising by this much is put on hold. The window restarts every time the room warms up by Min rise, so a slowly heating room is never held. `0` = off. | `180` min, `0.3` °C | Last night's case: Chloe's room led for 11 h at 19 °C. |
+| **Hold for** | How long a held room is left out of the decision. It then comes back automatically. | `120` min | |
+| **Security** | Enables Security mode (recommended). In 0.82 Security also switches central heating **off**; in 0.81 it only lowered the setpoint and left central heating on. | on | |
+| **Default temp / Default set point** | Values sent in Security mode. Keep the setpoint below the temperature so the controller sees no demand. | `10` °C / `7` °C | |
+
+### Debug
+
+| Field | What it does |
+|---|---|
+| **Debug Level** | None, Error, Warn, Info, Debug. *Warn* shows holds, purges and silent valves. |
+
+## Messages
+
+### Input (from smart-valve)
+
+```json
+{ "command": "set", "setpoint": "21.00", "temperature": "20.18", "requestedBy": "SV_PARENT",
+  "groupId": "1", "health": "OK", "reasons": [] }
 ```
 
-## State Persistence
+Other commands: `trigger` (re-send now), `stack` (output the list of rooms).
 
-The node automatically saves its complete state to the file system at `~/.node-red/.node-red-state/boiler-{node-id}.json`. This includes:
+### Output
 
-*   **liveStack**: Complete array of all connected valves with their setpoints and temperatures
-*   **activeItem**: Current active valve controlling the boiler
-*   **previousItem**: Previous active valve
-*   **previousActiveItemSp**: Previous setpoint for change detection
-*   **activeItemGap**: Current temperature gap
-*   **lastInputTs**: Timestamp of last received input
-*   **timestamp**: Last save timestamp
+The leading room (when *Output updates* is on): `{ id, name, sp, temp, groupId, lastupdate, health }`,
+or `{ name: "Security mode", setpoint, temperature }`.
 
-This state is automatically restored when:
-*   Node-RED restarts
-*   Flows are redeployed
-*   Node is reinitialized
+## Home Assistant
 
-The state file persists independently of Node-RED's context storage, ensuring the boiler remembers all connected valves and their states even after complete system restarts or redeployments. This prevents loss of heating control context and ensures seamless operation continuity.
+Tick **HA discovery** in the `smart-boiler-settings` node. The boiler appears as a device
+**SmartBoiler <name>**:
+
+| Entity | Value |
+|---|---|
+| Status | `heat`, `idle`, `security`, `no_data` |
+| Heat demand (binary sensor) | on when central heating is requested |
+| Leading room | name of the room the boiler follows |
+| Rooms requesting heat | count; the attribute `requesting` lists them |
+| Rooms ignored | count; the attribute `ignored` lists them with the reason (`silent`, `on_hold`, `failed`) |
+| Problem (binary sensor) | on when a room is ignored or in Security mode |
+
+The attribute `rooms` lists every room with setpoint, temperature, gap, state, health, reasons and last
+update. It answers "why is the boiler heating?" at a glance.
+
+## Settings node (`smart-boiler-settings`)
+
+Same fields as the valve settings node: Host, Port, Username, Password, Root path (discovery prefix),
+**HA discovery**, **State topic** (`smartheating`), Test Connection.
+
+## Upgrading from 0.81
+
+- Install smart-valve 0.82 at the same time (heartbeat), or set *Valve timeout* to `0` until you do.
+- Existing nodes keep their configuration; the new fields show their defaults the first time you open them.
+- The saved list of rooms is kept; rooms that no longer report drop out after 30 min and are removed after 24 h.
+
+## Tests
+
+```
+npm install
+npm test
+```
+
+19 tests run the node with a fake clock and an in-memory MQTT broker.
+
+## Changes
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## Installation
 1.  Install via Node-RED Palette Manager or `npm install`.

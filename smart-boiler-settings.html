@@ -7,6 +7,8 @@
       mqttPort:{value: '1883', required: true},
       mqttUser:{value: '', required: false},
       mqttRootPath:{value: 'homeassistant', required: true},
+      haDiscovery:{value: false},
+      haBaseTopic:{value: 'smartheating', required: false},
     },
     credentials: {
       mqttPassword: {type: "password"}
@@ -16,6 +18,8 @@
     },
     oneditprepare: function () {
       var node = this
+      // 0.82: configuration nodes saved by an older version have no State topic yet
+      if (!node.haBaseTopic) { $("#node-config-input-haBaseTopic").val('smartheating'); }
       
       $("#node-config-input-test-connection").on("click", function(e) {
           e.preventDefault();
@@ -91,6 +95,15 @@
     <input type="text" id="node-config-input-mqttRootPath">
   </div>
   <div class="form-row">
+    <label for="node-config-input-haDiscovery"><i class="fa fa-home"></i> HA discovery</label>
+    <input type="checkbox" id="node-config-input-haDiscovery" style="width:auto;">
+    <span>publish boiler entities to Home Assistant (discovery prefix = Root path)</span>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-haBaseTopic"><i class="fa fa-home"></i> State topic</label>
+    <input type="text" id="node-config-input-haBaseTopic" placeholder="smartheating">
+  </div>
+  <div class="form-row">
       <a href="#" class="editor-button" id="node-config-input-test-connection" style="margin-top: 4px;"><i class="fa fa-refresh"></i> Test Connection</a>
       <span id="test-connection-result" style="margin-left: 10px;"></span>
   </div>
@@ -99,10 +112,12 @@
 
 </script>
 
-<script type="text/x-red" data-help-name="smart-boilerr-settings">
+<script type="text/x-red" data-help-name="smart-boiler-settings">
   <h3>Settings</h3>
+  <p>MQTT connection used by smart-boiler nodes.</p>
   <dl class="message-properties">
-    <dt>Latitude & Longitude<span class="property-type">number</span></dt>
-    <dd>If the browser support geolocation the Latitude and Longitude will be updated to the current position when created. This position might not be accurate, so please verify that it is as good as you want it.</dd>
+    <dt>Root path</dt><dd>Home Assistant discovery prefix, usually <code>homeassistant</code>.</dd>
+    <dt>HA discovery</dt><dd>When ticked, the boiler publishes a Home Assistant device with Status, Heat demand, Leading room, Rooms requesting heat, Rooms ignored and Problem entities.</dd>
+    <dt>State topic</dt><dd>Base topic for the state: <code>&lt;state topic&gt;/boiler/&lt;boiler name&gt;/state</code>. The state carries every room with its setpoint, temperature and status (ok, silent, on_hold, failed).</dd>
   </dl>
 </script>
