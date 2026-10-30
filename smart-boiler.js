@@ -1,7 +1,7 @@
 
 /*
 __   _____ ___ ___        Author: Vincent BESSON
- \ \ / /_ _| _ ) _ \      Release: 0.82
+ \ \ / /_ _| _ ) _ \      Release: 0.82.1
   \ V / | || _ \   /      Date: 20261030
    \_/ |___|___/_|_\      Description: Nodered Heating Boiler Management
                 2026      Licence: Creative Commons
@@ -80,6 +80,9 @@ module.exports = function (RED) {
         this.unsatisfiedTimeout=(n.unsatisfiedTimeout!==undefined && n.unsatisfiedTimeout!=="" && !isNaN(n.unsatisfiedTimeout)) ? parseInt(n.unsatisfiedTimeout) : 180;
         this.unsatisfiedHold=(n.unsatisfiedHold!==undefined && n.unsatisfiedHold!=="" && !isNaN(n.unsatisfiedHold)) ? parseInt(n.unsatisfiedHold) : 120;
         this.minRise=(n.minRise!==undefined && n.minRise!=="" && !isNaN(n.minRise)) ? parseFloat(n.minRise) : 0.3;
+        this.holdGap=0.5;                  // °C: the hold timer only runs while the room is further than this below its setpoint
+        this.holds={};                     // room group -> time its hold ends (memory only: a restart starts clean)
+        this.leadTimer=undefined;          // {key, since, startTemp, sp} of the room currently leading
         this.lastHaPayload=undefined;
         this.lastHaPublishTs=0;
         
@@ -201,7 +204,10 @@ module.exports = function (RED) {
         }
         
         if (savedState) {
-            node.liveStack = savedState.liveStack || [];
+            node.liveStack = (savedState.liveStack || []).map(function(it){
+                delete it.leadSince; delete it.leadStartTemp; delete it.heldUntil; delete it.legacy;   // runtime only
+                return it;
+            });
             node.activeItem = savedState.activeItem;
             node.previousItem = savedState.previousItem;
             node.previousActiveItemSp = savedState.previousActiveItemSp;
@@ -273,6 +279,7 @@ module.exports = function (RED) {
                     bFound=true;
                     item.health=msg.health;
                     item.reasons=msg.reasons;
+                    item.legacy=(msg.health===undefined);       // a 0.81 valve: no heartbeat, never expired
                     item.sp=sp;
                     item.groupId=msg.groupId;
                     item.temp=adjustedTemp;
@@ -289,6 +296,7 @@ module.exports = function (RED) {
                 newItem.groupId=msg.groupId;
                 newItem.health=msg.health;
                 newItem.reasons=msg.reasons;
+                newItem.legacy=(msg.health===undefined);
                 newItem.lastupdate= now.toISOString();
                 node.liveStack.push(newItem);
             }
@@ -313,6 +321,7 @@ module.exports = function (RED) {
 
         function isFresh(item,now){
             if (node.itemMaxAge<=0 || item.lastupdate===undefined) return true;
+            if (item.legacy===true) return true;           // 0.81 valves only send on change
             return Math.abs(moment(item.lastupdate).diff(now,"m"))<node.itemMaxAge;
         }
 
@@ -341,6 +350,14 @@ module.exports = function (RED) {
                 text:(reason+", t:"+node.defaultTemp+"°C, sp:"+node.defaultSp+"°C")
             });
             publishHaState(moment(), node.liveStack.filter(function(it){ return isFresh(it,moment()); }), haStatus||'security');
+        }
+
+        function groupKey(it){
+            return (it.groupId!==undefined && it.groupId!==null && String(it.groupId)!=='') ? 'group '+it.groupId : it.name;
+        }
+        function isHeld(it,now){
+            let u=node.holds[groupKey(it)];
+            return u!==undefined && moment(u).isAfter(now);
         }
 
         function selectLeader(list){
@@ -379,11 +396,41 @@ module.exports = function (RED) {
                 ['sensor','leading',{name:'Leading room',unique_id:haUid+'_leading',value_template:'{{ value_json.leading }}',icon:'mdi:radiator'}],
                 ['sensor','requesting',{name:'Rooms requesting heat',unique_id:haUid+'_requesting',value_template:'{{ value_json.requesting | count }}',icon:'mdi:home-thermometer'}],
                 ['sensor','ignored',{name:'Rooms ignored',unique_id:haUid+'_ignored',value_template:'{{ value_json.ignored | count }}',icon:'mdi:alert'}],
-                ['binary_sensor','problem',{name:'Problem',unique_id:haUid+'_problem',device_class:'problem',value_template:"{{ 'ON' if (value_json.ignored | count) > 0 or value_json.status == 'security' else 'OFF' }}"}]
+                ['binary_sensor','problem',{name:'Problem',unique_id:haUid+'_problem',device_class:'problem',value_template:"{{ 'ON' if (value_json.ignored | count) > 0 or value_json.status == 'security' else 'OFF' }}"}],
+                ['sensor','status_detail',{name:'Status detail',unique_id:haUid+'_status_detail',icon:'mdi:information-outline',value_template:'{{ value_json.status_detail[:255] }}'}]
             ].forEach(function(e){
                 node.mqttstack.push({topic:`${ha.prefix}/${e[0]}/${haUid}/${e[1]}/config`,payload:Object.assign(e[2],common),qos:1,retain:true});
             });
             node.mqttstack.push({topic:haAvailTopic,payload:'online',qos:1,retain:true});
+        }
+
+        // Plain-language explanation of what the boiler does and why.
+        function boilerDetail(st,rooms,now){
+            const t=v=>(v===undefined||v===null||isNaN(v))?'?':parseFloat(v).toFixed(1)+' °C';
+            const age=r=>r.last_update?Math.round(Math.abs(moment(r.last_update).diff(now,'m'))):'?';
+            const why=function(r){
+                if (r.state==='silent') return `${r.name} (silent ${age(r)} min)`;
+                if (r.state==='on_hold') return `${r.name} (on hold until ${moment(r.held_until).format('HH:mm')}: did not warm up)`;
+                if (r.state==='failed') return `${r.name} (valve FAILED: ${(r.reasons||[]).join(', ')||'?'})`;
+                return r.name;
+            };
+            let head;
+            if (st.status==='heat'){
+                let lead=rooms.find(function(r){ return r.name===st.leading; });
+                head=`Heating for ${st.leading}: ${t(st.setpoint)} requested, room ${t(st.temperature)}`+(lead?` (gap ${lead.gap.toFixed(1)} °C).`:'.');
+                let others=rooms.filter(function(r){ return r.state==='ok' && r.gap>0 && r.name!==st.leading; }).map(function(r){ return `${r.name} (${r.gap.toFixed(1)} °C)`; });
+                if (others.length) head+=' Also asking: '+others.join(', ')+'.';
+            } else if (st.status==='idle'){
+                let ok=rooms.filter(function(r){ return r.state==='ok'; }).sort(function(a,b){ return b.gap-a.gap; });
+                head='No room needs heat, central heating off.'+(ok.length?` Closest: ${ok[0].name}, room ${t(ok[0].temperature)} for ${t(ok[0].setpoint)}.`:'');
+            } else if (st.status==='security'){
+                head=`Security mode: no credible valve report, central heating off and default ${t(node.defaultSp)} sent.`;
+            } else {
+                head='No valve has reported recently, central heating off.';
+            }
+            let ignored=rooms.filter(function(r){ return r.state!=='ok'; });
+            if (ignored.length) head+=' Ignored: '+ignored.map(why).join(', ')+'.';
+            return head;
         }
 
         function publishHaState(now,freshStack,status){
@@ -391,9 +438,9 @@ module.exports = function (RED) {
             freshStack=freshStack||[];
             let rooms=node.liveStack.map(function(it){
                 let fresh=freshStack.includes(it);
-                let held=it.heldUntil && moment(it.heldUntil).isAfter(now);
+                let held=isHeld(it,now);
                 let state= !fresh ? 'silent' : (held ? 'on_hold' : (it.health==='FAILED' ? 'failed' : 'ok'));
-                return {name:it.name,setpoint:parseFloat(it.sp),temperature:parseFloat(it.temp),gap:parseFloat((parseFloat(it.sp)-parseFloat(it.temp)).toFixed(2)),state:state,health:it.health||null,reasons:it.reasons||[],held_until:held?it.heldUntil:null,last_update:it.lastupdate};
+                return {name:it.name,setpoint:parseFloat(it.sp),temperature:parseFloat(it.temp),gap:parseFloat((parseFloat(it.sp)-parseFloat(it.temp)).toFixed(2)),state:state,health:it.health||null,reasons:it.reasons||[],held_until:held?node.holds[groupKey(it)]:null,last_update:it.lastupdate};
             });
             let demand = status ? false : (node.activeItem!==undefined && node.activeItemGap>0);
             let st={
@@ -406,6 +453,7 @@ module.exports = function (RED) {
                 ignored: rooms.filter(function(r){ return r.state!=='ok'; }).map(function(r){ return r.name+' ('+r.state+')'; }),
                 rooms: rooms
             };
+            st.status_detail=boilerDetail(st,rooms,now);
             let cmp=JSON.stringify(Object.assign({},st,{rooms:rooms.map(function(r){ return [r.name,r.state,r.setpoint,r.temperature]; })}));
             let nowMs=moment(now).valueOf();
             if (cmp!==node.lastHaPayload || nowMs-node.lastHaPublishTs>=5*60000){
@@ -521,9 +569,14 @@ module.exports = function (RED) {
             }
 
             if (freshStack.length==0){
+                node.leadTimer=undefined;
                 if (node.liveStack.length>0 && node.boilerSecurity==true){
                     securityMode("All valves silent");
                 } else {
+                    // Nothing credible to heat for: never leave central heating on with the last command.
+                    if (node.mqttUpdates==true){ stackCentralHeating(false); sendMqtt(); }
+                    node.activeItem=undefined; node.activeItemGap=-99;
+                    node.status({fill:'yellow',shape:'ring',text:'No valve reporting, central heating off'});
                     publishHaState(now,freshStack,'no_data');
                 }
                 return;
@@ -539,41 +592,35 @@ module.exports = function (RED) {
             }
             node.previousItem=node.activeItem;
 
-            // Rooms on hold (could not be satisfied) are left out until their hold ends.
-            let eligible=freshStack.filter(function(item){
-                if (item.heldUntil && moment(item.heldUntil).isAfter(now)) return false;
-                if (item.heldUntil){
-                    nlog(`${item.name}: hold ended, back in the decision`,"info");
-                    delete item.heldUntil;
-                    delete item.leadSince;
+            // Rooms on hold (could not be satisfied) are left out, by room group, until their hold ends.
+            Object.keys(node.holds).forEach(function(k){
+                if (!moment(node.holds[k]).isAfter(now)){
+                    nlog(`${k}: hold ended, back in the decision`,"info");
+                    delete node.holds[k];
                 }
-                return true;
             });
-
+            let eligible=freshStack.filter(function(item){ return !isHeld(item,now); });
             let pick=selectLeader(eligible);
 
-            // Unsatisfiable demand: the same room leads for unsatisfiedTimeout minutes without warming up.
-            if (node.unsatisfiedTimeout>0 && pick.item!==undefined && pick.gap>0){
-                let it=pick.item;
-                if (!it.leadSince || it.leadStartTemp===undefined){
-                    it.leadSince=now.toISOString();
-                    it.leadStartTemp=parseFloat(it.temp);
-                } else if (parseFloat(it.temp)-it.leadStartTemp>=node.minRise){
-                    it.leadSince=now.toISOString();            // warming up: restart the window
-                    it.leadStartTemp=parseFloat(it.temp);
-                } else if (Math.abs(moment(it.leadSince).diff(now,"m"))>=node.unsatisfiedTimeout){
-                    it.heldUntil=moment(now).add(node.unsatisfiedHold,"m").toISOString();
-                    nlog(`${it.name}: requested heat for ${node.unsatisfiedTimeout} min without warming up (${it.leadStartTemp}°C -> ${it.temp}°C), on hold for ${node.unsatisfiedHold} min`,"warn");
-                    delete it.leadSince;
-                    eligible=eligible.filter(function(x){ return x!==it; });
+            // Unsatisfiable demand: the same room leads for unsatisfiedTimeout minutes, clearly below its setpoint
+            // (gap above holdGap), without warming up by minRise. The timer restarts when the leading room changes,
+            // its setpoint changes or it warms up, and stops when the room gets close to its setpoint.
+            if (node.unsatisfiedTimeout>0 && pick.item!==undefined && pick.gap>node.holdGap){
+                let it=pick.item, key=groupKey(it), T=node.leadTimer, temp=parseFloat(it.temp), sp=parseFloat(it.sp);
+                if (!T || T.key!==key || T.sp!==sp){
+                    node.leadTimer={key:key, since:now.valueOf(), startTemp:temp, sp:sp};
+                } else if (temp-T.startTemp>=node.minRise){
+                    node.leadTimer={key:key, since:now.valueOf(), startTemp:temp, sp:sp};
+                } else if (now.valueOf()-T.since>=node.unsatisfiedTimeout*60000){
+                    node.holds[key]=moment(now).add(node.unsatisfiedHold,"m").toISOString();
+                    nlog(`${key}: asked for heat for ${node.unsatisfiedTimeout} min without warming up (${T.startTemp}°C -> ${temp}°C for ${sp}°C), on hold for ${node.unsatisfiedHold} min`,"warn");
+                    node.leadTimer=undefined;
+                    eligible=eligible.filter(function(x){ return groupKey(x)!==key; });
                     pick=selectLeader(eligible);
-                    saveState();
                 }
+            } else {
+                node.leadTimer=undefined;
             }
-            // Only the current leader keeps its lead timer.
-            freshStack.forEach(function(item){
-                if (pick.item===undefined || item!==pick.item || pick.gap<=0) delete item.leadSince;
-            });
 
             if (pick.item===undefined){
                 securityMode("All requesting rooms on hold","idle");

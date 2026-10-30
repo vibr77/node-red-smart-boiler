@@ -28,9 +28,16 @@ function boiler(extra = {}) {
     return b;
 }
 // What a smart-valve sends to the boiler.
+// What a 0.82 smart-valve sends to the boiler (one room group per name unless given).
+const GROUPS = {};
+const gid = (name) => GROUPS[name] || (GROUPS[name] = Object.keys(GROUPS).length + 1);
 const valve = (b, name, sp, temp, extra = {}) => RED.input(b, { payload: Object.assign({
     command: 'set', target: 'boiler', setpoint: Number(sp).toFixed(2), temperature: Number(temp).toFixed(2),
-    requestedBy: name, groupId: 1 }, extra) });
+    requestedBy: name, groupId: gid(name), health: 'OK', reasons: [] }, extra) });
+// What a 0.81 smart-valve sends: no health, only on change.
+const valve081 = (b, name, sp, temp) => RED.input(b, { payload: {
+    command: 'set', target: 'boiler', setpoint: Number(sp).toFixed(2), temperature: Number(temp).toFixed(2),
+    requestedBy: name, groupId: gid(name) } });
 
 const last = (topic) => H.broker.last(topic);
 const leader = () => { const l = last(B.lead); return l && l.value; };
@@ -152,7 +159,7 @@ describe('smart-boiler 0.82', function () {
             assert.strictEqual(leader(), 'CHLOE');
             keepAlive(b, [['CHLOE', 23, 19.0], ['LOU', 20, 19.5]], 20);
             assert.strictEqual(leader(), 'LOU');
-            assert.ok(b.liveStack.find(i => i.name === 'CHLOE').heldUntil);
+            assert.ok(b.holds['group ' + gid('CHLOE')], JSON.stringify(b.holds));
         });
 
         it('B-12 the hold ends after the hold duration', function () {
@@ -181,6 +188,64 @@ describe('smart-boiler 0.82', function () {
             const b = boiler({ unsatisfiedTimeout: '0' });
             keepAlive(b, [['CHLOE', 23, 19.0]], 600);
             assert.strictEqual(leader(), 'CHLOE');
+        });
+    });
+
+    describe('Review fixes (0.82.1)', function () {
+        it('B-20 a room just below its setpoint (radiator at full) is never put on hold', function () {
+            const b = boiler();
+            keepAlive(b, [['PARENT', 20, 19.8]], 8 * 60);
+            assert.strictEqual(leader(), 'PARENT');
+            assert.strictEqual(last(B.ch), 1);
+            assert.deepStrictEqual(b.holds, {});
+        });
+
+        it('B-21 the hold timer does not survive a restart', async function () {
+            let b = boiler();
+            keepAlive(b, [['CHLOE', 21, 18]], 170);
+            await RED.close(b); nodes = [];
+            b = boiler();
+            keepAlive(b, [['CHLOE', 21, 18]], 30);
+            assert.strictEqual(last(B.ch), 1, 'still heating 30 min after restart');
+            assert.deepStrictEqual(b.holds, {});
+        });
+
+        it('B-22 a room with several valves is held as a whole (salon: 4 valves, one sensor)', function () {
+            const b = boiler();
+            const salon = ['ESCALIER', 'CANAPE', 'PASSERELLE', 'BIBLIO'].map(n => ['SV_SALON_' + n, 21, 18, ]);
+            const send = () => salon.forEach(r => valve(b, r[0], r[1], r[2], { groupId: 3 }));
+            for (let i = 0; i < 200; i += 10) { send(); min(10); }
+            assert.ok(b.holds['group 3']);
+            assert.strictEqual(last(B.ch), 0, 'no other salon valve takes over');
+        });
+
+        it('B-23 0.81 valves (no heartbeat) are never expired: upgrading only the boiler keeps heating', function () {
+            const b = boiler();
+            valve081(b, 'OLD_ROOM', 21, 19);                   // quiet: its temperature does not change
+            for (let i = 0; i < 12; i++) { valve081(b, 'BUSY_ROOM', 20, 20.5 + (i % 2) / 100); min(10); }
+            assert.strictEqual(leader(), 'OLD_ROOM', 'quiet 0.81 room still counted after 2 h');
+            assert.strictEqual(last(B.ch), 1);
+        });
+
+        it('B-24 every valve silent with Security off: central heating is switched off', function () {
+            const b = boiler({ boilerSecurity: false });
+            valve(b, 'LOU', 21, 19);
+            assert.strictEqual(last(B.ch), 1);
+            min(35);
+            assert.strictEqual(last(B.ch), 0);
+        });
+
+        it('B-25 status detail explains who the boiler heats for and which rooms are ignored', function () {
+            load({ haDiscovery: true });
+            const b = boiler();
+            valve(b, 'CHLOE', 19, 19, { health: 'FAILED', reasons: ['no_ack'], setpoint: '5.00' });
+            keepAlive(b, [['PARENT', 21, 19.8], ['LOU', 20, 19.6]], 10);
+            let st = JSON.parse(H.broker.retained['smartheating/boiler/rsl_boiler/state']);
+            assert.strictEqual(st.status_detail, 'Heating for PARENT: 21.0 °C requested, room 19.8 °C (gap 1.2 °C). Also asking: LOU (0.4 °C). Ignored: CHLOE (valve FAILED: no_ack).');
+            keepAlive(b, [['PARENT', 21, 21.2], ['LOU', 20, 20.5]], 30);
+            st = JSON.parse(H.broker.retained['smartheating/boiler/rsl_boiler/state']);
+            assert.match(st.status_detail, /^No room needs heat, central heating off\. Closest: (LOU|PARENT), room .* Ignored: CHLOE \(silent \d+ min\)\.$/);
+            assert.ok(H.broker.retained['homeassistant/sensor/smartboiler_b1/status_detail/config']);
         });
     });
 

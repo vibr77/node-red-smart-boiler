@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.82.1 — 2026-10-30
+
+- Unsatisfied hold only counts while the room is more than 0.5 °C below its setpoint; a room just below its
+  setpoint at full radiator output is no longer cut off.
+- Holds apply to the whole room group (several valves on one sensor), and the hold timer starts again after a
+  restart, a silence, a setpoint change or a change of leading room (timers are no longer saved to disk).
+- Valves still on 0.81 (no heartbeat) are never expired, so the boiler can be upgraded before the valves.
+- With every valve silent and Security off, central heating is now switched off.
+- New "Status detail" entity: who the boiler heats for, which rooms are ignored and why.
+
 ## 0.82.0 — 2026-10-30
 
 - Per-valve expiry ("Valve timeout", default 30 min): a silent valve no longer drives the boiler; valves

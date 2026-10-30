@@ -19,9 +19,11 @@ smart-valve (room n) ─┘                          setpoint, room temperature,
    higher setpoint wins.
 4. If that gap is positive, **central heating is switched on** and the boiler receives the leading room's
    setpoint and temperature. Otherwise central heating is switched off.
-5. If the same room leads for **Unsatisfied** minutes without warming up by **Min rise**, it is put on hold
-   for **Hold for** minutes and the next room takes over. A room the boiler cannot heat (stuck valve, open
-   window, wrong sensor) can no longer keep the boiler running all night.
+5. If the same room leads for **Unsatisfied** minutes while clearly below its setpoint (more than 0.5 °C) and
+   without warming up by **Min rise**, the whole room (all valves of its group) is put on hold for **Hold for**
+   minutes and the next room takes over. A room just below its setpoint is never held, and the timer starts again
+   after a restart, a silence, a setpoint change or a change of leading room. A room the boiler cannot heat (stuck
+   valve, open window, wrong sensor) can no longer keep the boiler running all night.
 6. If nothing reports at all for **Max duration**, or every room is silent, the boiler goes to **Security**:
    default setpoint and temperature, central heating off.
 
@@ -72,9 +74,9 @@ Each topic has a **Key**: when filled, the value is sent as `{"<key>": value}`; 
 
 | Field | What it does | Default | Notes |
 |---|---|---|---|
-| **Valve timeout** | A room that has not reported for this long is ignored. After 24 h without news it is removed from the saved list, so disabled or deleted valves stop lingering (in 0.81 they stayed forever, across restarts). `0` = never ignore. | `30` min | Requires smart-valve 0.82 (heartbeat every 10 min). With 0.81 valves, set it to `0`. |
+| **Valve timeout** | A room that has not reported for this long is ignored. After 24 h without news it is removed from the saved list, so disabled or deleted valves stop lingering (in 0.81 they stayed forever, across restarts). `0` = never ignore. Valves still on 0.81 (no heartbeat, recognised automatically) are never ignored. | `30` min | smart-valve 0.82 re-sends every 10 min. |
 | **Max SP** | Any setpoint above this is capped. | `25` °C | |
-| **Unsatisfied … min without rising by … °C** | A room leading this long without its temperature rising by this much is put on hold. The window restarts every time the room warms up by Min rise, so a slowly heating room is never held. `0` = off. | `180` min, `0.3` °C | Last night's case: Chloe's room led for 11 h at 19 °C. |
+| **Unsatisfied … min without rising by … °C** | A room leading this long, more than 0.5 °C below its setpoint, without its temperature rising by this much, is put on hold (all its valves). The window restarts every time the room warms up by Min rise, so a slowly heating room is never held. `0` = off. | `180` min, `0.3` °C | The 29–30 Oct case: Chloe's room led for 11 h at 19 °C. |
 | **Hold for** | How long a held room is left out of the decision. It then comes back automatically. | `120` min | |
 | **Security** | Enables Security mode (recommended). In 0.82 Security also switches central heating **off**; in 0.81 it only lowered the setpoint and left central heating on. | on | |
 | **Default temp / Default set point** | Values sent in Security mode. Keep the setpoint below the temperature so the controller sees no demand. | `10` °C / `7` °C | |
@@ -113,6 +115,7 @@ Tick **HA discovery** in the `smart-boiler-settings` node. The boiler appears as
 | Leading room | name of the room the boiler follows |
 | Rooms requesting heat | count; the attribute `requesting` lists them |
 | Rooms ignored | count; the attribute `ignored` lists them with the reason (`silent`, `on_hold`, `failed`) |
+| Status detail | plain language: who the boiler heats for and why, which rooms are ignored and why, e.g. *"Heating for SV_PARENT: 21.0 °C requested, room 19.8 °C (gap 1.2 °C). Also asking: SV_LOU (0.4 °C). Ignored: SV_CHLOE (valve FAILED: no_ack)."* |
 | Problem (binary sensor) | on when a room is ignored or in Security mode |
 
 The attribute `rooms` lists every room with setpoint, temperature, gap, state, health, reasons and last
@@ -125,7 +128,8 @@ Same fields as the valve settings node: Host, Port, Username, Password, Root pat
 
 ## Upgrading from 0.81
 
-- Install smart-valve 0.82 at the same time (heartbeat), or set *Valve timeout* to `0` until you do.
+- Valves still on 0.81 are recognised and never expired, so the boiler can be upgraded first. With every valve
+  silent, central heating is switched off even when Security is off.
 - Existing nodes keep their configuration; the new fields show their defaults the first time you open them.
 - The saved list of rooms is kept; rooms that no longer report drop out after 30 min and are removed after 24 h.
 
