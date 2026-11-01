@@ -293,4 +293,69 @@ describe('smart-boiler 0.82', function () {
             assert.ok(!Object.keys(H.broker.retained).some(t => t.startsWith('homeassistant/sensor') || t.startsWith('smartheating/')));
         });
     });
+
+    describe('Remove command and away rooms (0.83)', function () {
+        const remove = (b, p) => RED.input(b, { payload: Object.assign({ command: 'remove' }, p) });
+
+        it('B-26 remove by name drops the valve; if it was leading the boiler follows the next room', function () {
+            const b = boiler();
+            valve(b, 'CHLOE', 23, 19);
+            valve(b, 'LOU', 21, 20);
+            assert.strictEqual(leader(), 'CHLOE');
+            remove(b, { requestedBy: 'CHLOE' });
+            assert.deepStrictEqual(b.liveStack.map(i => i.name), ['LOU']);
+            assert.strictEqual(leader(), 'LOU');
+            assert.strictEqual(last(B.sp), 21);
+        });
+
+        it('B-27 remove a list of names, a room group, or everything (central heating off)', function () {
+            const b = boiler();
+            valve(b, 'SALON1', 21, 19, { groupId: 9 });
+            valve(b, 'SALON2', 21, 19, { groupId: 9 });
+            valve(b, 'LOU', 20, 19.5);
+            valve(b, 'PARENT', 19, 18);
+            remove(b, { groupId: 9 });
+            assert.deepStrictEqual(b.liveStack.map(i => i.name), ['LOU', 'PARENT']);
+            remove(b, { requestedBy: ['LOU'] });
+            assert.deepStrictEqual(b.liveStack.map(i => i.name), ['PARENT']);
+            remove(b, { all: true });
+            assert.strictEqual(b.liveStack.length, 0);
+            assert.strictEqual(last(B.ch), 0);
+        });
+
+        it('B-28 the removal is saved; a valve still running comes back with its next message', async function () {
+            let b = boiler();
+            valve(b, 'CHLOE', 23, 19);
+            valve(b, 'LOU', 21, 20);
+            remove(b, { requestedBy: 'CHLOE' });
+            await RED.close(b); nodes = [];
+            b = boiler();
+            assert.deepStrictEqual(b.liveStack.map(i => i.name), ['LOU']);
+            valve(b, 'CHLOE', 23, 19);
+            assert.deepStrictEqual(b.liveStack.map(i => i.name).sort(), ['CHLOE', 'LOU']);
+        });
+
+        it('B-29 an incomplete or unknown remove does not crash nor change the stack', function () {
+            const b = boiler();
+            valve(b, 'LOU', 21, 20);
+            assert.doesNotThrow(() => remove(b, {}));
+            assert.doesNotThrow(() => remove(b, { requestedBy: 'NOBODY' }));
+            assert.deepStrictEqual(b.liveStack.map(i => i.name), ['LOU']);
+        });
+
+        it('B-30 an away room only drives the boiler below its frost setpoint and is listed in Home Assistant', function () {
+            load({ haDiscovery: true });
+            const b = boiler();
+            assert.ok(H.broker.retained['homeassistant/sensor/smartboiler_b1/away/config']);
+            valve(b, 'LOU', 7, 12, { away: true });
+            valve(b, 'PARENT', 19, 20);
+            assert.strictEqual(last(B.ch), 0, 'away room warm enough: no heat');
+            let st = JSON.parse(H.broker.retained['smartheating/boiler/rsl_boiler/state']);
+            assert.deepStrictEqual(st.away, ['LOU']);
+            assert.match(st.status_detail, /Away \(frost protection only\): LOU 7\.0 °C/);
+            valve(b, 'LOU', 7, 6, { away: true });
+            assert.strictEqual(leader(), 'LOU', 'frost protection');
+            assert.strictEqual(last(B.ch), 1);
+        });
+    });
 });

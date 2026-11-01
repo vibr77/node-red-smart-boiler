@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.83.0 — 2026-11-01
+
+- New `remove` command: drop a valve (`requestedBy`, a name or a list), a room group (`groupId`) or every valve
+  (`all: true`) from the stack; the leader, holds and timers are updated and the stack saved.
+- Rooms in smart-valve away mode (`away: true`) are listed in Home Assistant (*Rooms away* entity, `away` attribute,
+  Status detail) and drive the boiler only below their frost setpoint.
+
 ## 0.82.1 — 2026-10-30
 
 - Unsatisfied hold only counts while the room is more than 0.5 °C below its setpoint; a room just below its

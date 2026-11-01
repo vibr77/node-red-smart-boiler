@@ -283,6 +283,7 @@ module.exports = function (RED) {
                     item.sp=sp;
                     item.groupId=msg.groupId;
                     item.temp=adjustedTemp;
+                    item.away=(msg.away===true);
                     item.lastupdate= now.toISOString(); // last update timestamp of the item
                 }
             });
@@ -297,6 +298,7 @@ module.exports = function (RED) {
                 newItem.health=msg.health;
                 newItem.reasons=msg.reasons;
                 newItem.legacy=(msg.health===undefined);
+                newItem.away=(msg.away===true);
                 newItem.lastupdate= now.toISOString();
                 node.liveStack.push(newItem);
             }
@@ -304,6 +306,39 @@ module.exports = function (RED) {
             evaluate();                                 // Evaluate change straight away
             saveState();                                // Save state after processing input
             return;
+        }
+
+        // Removes valves from the stack: {command:"remove", requestedBy:"LOU"} (or a list of names),
+        // {command:"remove", groupId:3} (every valve of a room group) or {command:"remove", all:true}.
+        // A valve that is still running comes back with its next message (heartbeat every 10 min).
+        function removeItems(p){
+            let names = p.requestedBy===undefined || p.requestedBy===null ? [] : [].concat(p.requestedBy).map(String);
+            let byGroup = p.groupId!==undefined && p.groupId!==null && String(p.groupId)!=='';
+            if (!names.length && !byGroup && p.all!==true){
+                node.error("remove: expect requestedBy, groupId or all:true in msg.payload:"+JSON.stringify(p));
+                return [];
+            }
+            let gone=[];
+            node.liveStack=node.liveStack.filter(function(it){
+                let hit = p.all===true || names.includes(String(it.id)) || (byGroup && String(it.groupId)===String(p.groupId));
+                if (hit) gone.push(it);
+                return !hit;
+            });
+            if (!gone.length){
+                nlog("remove: no matching valve in the stack ("+JSON.stringify(p)+")","warn");
+                return [];
+            }
+            nlog("Removed from the stack: "+gone.map(function(i){return i.name;}).join(", "),"info");
+            gone.forEach(function(it){
+                let k=groupKey(it);
+                let left=node.liveStack.some(function(o){ return groupKey(o)===k; });
+                if (!left){ delete node.holds[k]; if (node.leadTimer && node.leadTimer.key===k) node.leadTimer=undefined; }
+                if (node.activeItem && node.activeItem.id==it.id){ node.activeItem=undefined; node.activeItemGap=-99; }
+            });
+            node.lastHaPayload=undefined;                 // republish the room list
+            evaluate();
+            saveState();
+            return gone.map(function(i){return i.name;});
         }
         function keyed(key,value){
             if (key && key.trim()!=""){
@@ -396,6 +431,7 @@ module.exports = function (RED) {
                 ['sensor','leading',{name:'Leading room',unique_id:haUid+'_leading',value_template:'{{ value_json.leading }}',icon:'mdi:radiator'}],
                 ['sensor','requesting',{name:'Rooms requesting heat',unique_id:haUid+'_requesting',value_template:'{{ value_json.requesting | count }}',icon:'mdi:home-thermometer'}],
                 ['sensor','ignored',{name:'Rooms ignored',unique_id:haUid+'_ignored',value_template:'{{ value_json.ignored | count }}',icon:'mdi:alert'}],
+                ['sensor','away',{name:'Rooms away',unique_id:haUid+'_away',value_template:'{{ (value_json.away or []) | count }}',icon:'mdi:home-export-outline'}],
                 ['binary_sensor','problem',{name:'Problem',unique_id:haUid+'_problem',device_class:'problem',value_template:"{{ 'ON' if (value_json.ignored | count) > 0 or value_json.status == 'security' else 'OFF' }}"}],
                 ['sensor','status_detail',{name:'Status detail',unique_id:haUid+'_status_detail',icon:'mdi:information-outline',value_template:'{{ value_json.status_detail[:255] }}'}]
             ].forEach(function(e){
@@ -430,6 +466,8 @@ module.exports = function (RED) {
             }
             let ignored=rooms.filter(function(r){ return r.state!=='ok'; });
             if (ignored.length) head+=' Ignored: '+ignored.map(why).join(', ')+'.';
+            let away=rooms.filter(function(r){ return r.away && r.state==='ok'; });
+            if (away.length) head+=' Away (frost protection only): '+away.map(function(r){ return `${r.name} ${t(r.setpoint)}`; }).join(', ')+'.';
             return head;
         }
 
@@ -440,7 +478,7 @@ module.exports = function (RED) {
                 let fresh=freshStack.includes(it);
                 let held=isHeld(it,now);
                 let state= !fresh ? 'silent' : (held ? 'on_hold' : (it.health==='FAILED' ? 'failed' : 'ok'));
-                return {name:it.name,setpoint:parseFloat(it.sp),temperature:parseFloat(it.temp),gap:parseFloat((parseFloat(it.sp)-parseFloat(it.temp)).toFixed(2)),state:state,health:it.health||null,reasons:it.reasons||[],held_until:held?node.holds[groupKey(it)]:null,last_update:it.lastupdate};
+                return {name:it.name,away:it.away===true,setpoint:parseFloat(it.sp),temperature:parseFloat(it.temp),gap:parseFloat((parseFloat(it.sp)-parseFloat(it.temp)).toFixed(2)),state:state,health:it.health||null,reasons:it.reasons||[],held_until:held?node.holds[groupKey(it)]:null,last_update:it.lastupdate};
             });
             let demand = status ? false : (node.activeItem!==undefined && node.activeItemGap>0);
             let st={
@@ -451,6 +489,7 @@ module.exports = function (RED) {
                 temperature: (!status && node.activeItem) ? parseFloat(node.activeItem.temp) : parseFloat(node.defaultTemp),
                 requesting: rooms.filter(function(r){ return r.state==='ok' && r.gap>0; }).map(function(r){ return r.name; }),
                 ignored: rooms.filter(function(r){ return r.state!=='ok'; }).map(function(r){ return r.name+' ('+r.state+')'; }),
+                away: rooms.filter(function(r){ return r.away; }).map(function(r){ return r.name; }),
                 rooms: rooms
             };
             st.status_detail=boilerDetail(st,rooms,now);
@@ -723,6 +762,9 @@ module.exports = function (RED) {
 
                 stackMqttMsg();  
                 sendMqtt();
+            }
+            else if (msg.payload.command=="remove"){ // drop valve(s) from the stack
+                removeItems(msg.payload);
             }
             else if (msg.payload.command=="stack"){ // output the current stack
                 

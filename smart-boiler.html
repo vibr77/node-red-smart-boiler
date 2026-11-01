@@ -361,6 +361,12 @@
     Example:
     msg.payload = { command: "set", setpoint: 23, temperature: 20, requestedBy: "Valve kitchen", groupId: 1 }
 
+    Remove valve(s) from the stack (a valve still running comes back with its next message):
+    msg.payload = { command: "remove", requestedBy: "Valve kitchen" }   // a name or a list of names
+    msg.payload = { command: "remove", groupId: 3 }                     // every valve of a room group
+    msg.payload = { command: "remove", all: true }                      // empty the stack
+    A "set" with away: true (smart-valve away mode) keeps the room in the stack with its frost setpoint.
+
     VALVE PROCESSING:
     ----------------
     • Each input message creates or updates a valve entry in the internal stack
@@ -455,7 +461,13 @@
     }
 
     Example:
-    msg.payload = { command: "set", setpoint: 23, temperature: 20, requestedBy: "Valve kitchen", groupId: 1 }</code></pre>
+    msg.payload = { command: "set", setpoint: 23, temperature: 20, requestedBy: "Valve kitchen", groupId: 1 }
+
+    Remove valve(s) from the stack (a valve still running comes back with its next message):
+    msg.payload = { command: "remove", requestedBy: "Valve kitchen" }   // a name or a list of names
+    msg.payload = { command: "remove", groupId: 3 }                     // every valve of a room group
+    msg.payload = { command: "remove", all: true }                      // empty the stack
+    A "set" with away: true (smart-valve away mode) keeps the room in the stack with its frost setpoint.</code></pre>
 
         <h3>VALVE PROCESSING:</h3>
         <ul>

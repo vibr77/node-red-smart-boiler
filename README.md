@@ -96,7 +96,23 @@ Each topic has a **Key**: when filled, the value is sent as `{"<key>": value}`; 
   "groupId": "1", "health": "OK", "reasons": [] }
 ```
 
-Other commands: `trigger` (re-send now), `stack` (output the list of rooms).
+Optional `"away": true` (smart-valve away mode): the setpoint is the frost protection setpoint, the room is listed under
+*Rooms away* and only drives the boiler when it falls below it.
+
+Other commands: `trigger` (re-send now), `stack` (output the list of rooms), `remove` (below).
+
+### Removing a valve from the stack (0.83)
+
+| `msg.payload` | Effect |
+|---|---|
+| `{ "command": "remove", "requestedBy": "SV_CHLOE" }` | drops that valve (a list of names works too) |
+| `{ "command": "remove", "groupId": 3 }` | drops every valve of the room group |
+| `{ "command": "remove", "all": true }` | empties the stack |
+
+If the removed valve was leading, the boiler follows the next room straight away (or switches central heating off);
+its hold and timers are cleared and the stack is saved. A valve that is still running comes back with its next
+message (heartbeat, 10 min by default): disable or delete the smart-valve node first, or use its *away* mode to keep
+it in but frost-protection only. Silent valves are still purged automatically after *Purge after*.
 
 ### Output
 
@@ -114,6 +130,7 @@ Tick **HA discovery** in the `smart-boiler-settings` node. The boiler appears as
 | Heat demand (binary sensor) | on when central heating is requested |
 | Leading room | name of the room the boiler follows |
 | Rooms requesting heat | count; the attribute `requesting` lists them |
+| Rooms away | count; the attribute `away` lists the rooms in smart-valve away mode |
 | Rooms ignored | count; the attribute `ignored` lists them with the reason (`silent`, `on_hold`, `failed`) |
 | Status detail | plain language: who the boiler heats for and why, which rooms are ignored and why, e.g. *"Heating for SV_PARENT: 21.0 °C requested, room 19.8 °C (gap 1.2 °C). Also asking: SV_LOU (0.4 °C). Ignored: SV_CHLOE (valve FAILED: no_ack)."* |
 | Problem (binary sensor) | on when a room is ignored or in Security mode |
